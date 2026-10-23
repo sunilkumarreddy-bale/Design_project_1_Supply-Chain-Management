@@ -1,0 +1,67 @@
+# Development stack: MongoDB 7 single-node replica set (transactions), API with auto-seed, Vite dev server.
+# docker compose up  ->  http://localhost:5173  (API on :4000, MongoDB on :27017)
+services:
+  mongo:
+    image: mongo:7
+    command: ['--replSet', 'rs0', '--bind_ip_all', '--port', '27017']
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # initiates the replica set on first start, then reports healthy once a primary exists
+      test:
+        [
+          'CMD',
+          'mongosh',
+          '--quiet',
+          '--eval',
+          "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }).ok }; db.hello().isWritablePrimary ? 0 : 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  backend:
+    image: node:20
+    working_dir: /app
+    command: sh -c "npm ci && npm run seed -- --if-empty && npm run dev"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      MONGODB_URI: mongodb://mongo:27017/smart_inventory?replicaSet=rs0
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      CLIENT_ORIGIN: http://localhost:5173
+      PUBLIC_BASE_URL: http://localhost:4000
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-5000}
+    env_file:
+      - path: ./backend/.env
+        required: false
+    ports:
+      - '4000:4000'
+    volumes:
+      - ./backend:/app
+      - backend-node-modules:/app/node_modules
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    image: node:20
+    working_dir: /app
+    command: sh -c "npm ci && npx vite --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_PROXY_TARGET: http://backend:4000
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:
+  backend-node-modules:
+  frontend-node-modules:
