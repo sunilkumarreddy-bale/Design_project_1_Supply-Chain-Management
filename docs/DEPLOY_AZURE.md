@@ -20,7 +20,22 @@ Atlas (M0 free tier for trials, M10+ for production); check current prices in th
 4. Copy the connection string:
    `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/smart_inventory?retryWrites=true&w=majority`
 
-## 2. Let GitHub deploy to your subscription (OIDC, no stored passwords)
+## 2. Let GitHub deploy to your subscription
+
+**Option A: service principal with a secret (simplest).** Run in Azure Cloud Shell:
+
+```bash
+az ad sp create-for-rbac --name smart-inventory-deploy --role Contributor \
+  --scopes /subscriptions/$(az account show --query id -o tsv)
+```
+
+Store this JSON as the GitHub secret `AZURE_CREDENTIALS` (values from the command output):
+
+```json
+{ "clientId": "<appId>", "clientSecret": "<password>", "tenantId": "<tenant>", "subscriptionId": "<subscription id>" }
+```
+
+**Option B: OIDC federated credential (no stored password).**
 
 With the Azure CLI on your machine (`az login` first):
 
@@ -47,17 +62,15 @@ To limit access, assign Contributor on a pre-created resource group instead of t
 
 | Secret | Value |
 |--------|-------|
-| `AZURE_CLIENT_ID` | `$APP` from step 2 |
-| `AZURE_TENANT_ID` | `$TENANT` |
-| `AZURE_SUBSCRIPTION_ID` | `$SUB` |
+| `AZURE_CREDENTIALS` | Option A JSON (or, for option B, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) |
 | `MONGODB_URI` | Atlas connection string |
 | `JWT_SECRET` | output of `openssl rand -hex 48` |
 | `VITE_GOOGLE_MAPS_KEY` | optional |
 
 ## 4. Deploy
 
-**Actions → Deploy to Azure → Run workflow.** Inputs: resource group (default `rg-smart-inventory`), region
-(default `centralindia`), name prefix, and whether to seed demo data when the database is empty. The workflow:
+**Actions → Deploy to Azure → Run workflow.** Inputs: resource group (default `rg-smart-inventory`), API region
+(default `centralindia`), frontend region (a Static Web Apps region), name prefix, and whether to seed demo data when the database is empty. The workflow:
 
 1. creates the resource group and runs the Bicep template (App Service plan, API, Static Web App);
 2. builds the API, optionally seeds, prunes dev dependencies and zip-deploys it to App Service;
@@ -80,3 +93,9 @@ on the App Service file system (`/home/site/wwwroot/uploads`) unless Cloudinary 
 * Sign in on the Static Web App URL with `admin@example.com` / `Password123!` (if seeded); the green dot in the top
   bar shows the Socket.io connection is live.
 * Change the seeded passwords (Users → Reset password) before sharing the URL.
+
+## Azure for Students
+
+Student subscriptions only allow a few regions (Azure Policy "Allowed resource deployment regions"). If the
+deployment fails with `RequestDisallowedByAzure` / `RequestDisallowedByPolicy`, check the allowed list in the portal
+(Policy → Assignments) and run the workflow again with an allowed API region and frontend region.
