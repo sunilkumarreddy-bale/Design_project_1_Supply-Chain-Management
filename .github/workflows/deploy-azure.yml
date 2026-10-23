@@ -1,10 +1,6 @@
+
 name: Deploy to Azure
 
-# Run manually from the Actions tab. Needs these repository secrets:
-#   AZURE_CREDENTIALS  JSON from `az ad sp create-for-rbac` mapped to {clientId, clientSecret, tenantId, subscriptionId}
-#                      (or AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID for an OIDC federated credential)
-#   MONGODB_URI        MongoDB connection string (replica set, e.g. Atlas; required for transactions)
-#   JWT_SECRET         long random string
 on:
   workflow_dispatch:
     inputs:
@@ -12,21 +8,33 @@ on:
         description: Resource group (created if missing)
         default: rg-smart-inventory
         required: true
+        type: string
+
       location:
-        description: Region for the API
+        description: Azure region for the API
         default: centralindia
         required: true
+        type: string
+
       staticWebAppLocation:
-        description: Region for the frontend (Static Web Apps regions only)
+        description: Region for Azure Static Web Apps
         type: choice
-        options: [eastasia, centralus, eastus2, westus2, westeurope]
+        options:
+          - eastasia
+          - centralus
+          - eastus2
+          - westus2
+          - westeurope
         default: eastasia
+
       appName:
         description: Resource name prefix (3-12 lowercase letters/digits)
         default: smartinv
         required: true
+        type: string
+
       seed:
-        description: Seed the demo data if the database is empty
+        description: Seed demo data if the database is empty
         type: boolean
         default: true
 
@@ -38,54 +46,109 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    env:
-      HAS_SP_CREDS: ${{ secrets.AZURE_CREDENTIALS != '' }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Azure login (service principal secret)
-        if: ${{ env.HAS_SP_CREDS == 'true' }}
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+      # Azure authentication using OIDC (no client secret required)
       - name: Azure login (OIDC)
-        if: ${{ env.HAS_SP_CREDS != 'true' }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify Azure subscription
+        run: |
+          az account show \
+            --query "{subscription:name, subscriptionId:id, tenantId:tenantId}" \
+            --output table
+
       - name: Check required secrets
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        shell: bash
         run: |
-          [ -n "$MONGODB_URI" ] || { echo "::error::Add the MONGODB_URI secret"; exit 1; }
-          [ -n "$JWT_SECRET" ] || { echo "::error::Add the JWT_SECRET secret"; exit 1; }
+          set -euo pipefail
+
+          if [ -z "$MONGODB_URI" ]; then
+            echo "::error::Add the MONGODB_URI repository secret."
+            exit 1
+          fi
+
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Add the JWT_SECRET repository secret."
+            exit 1
+          fi
+
+      - name: Validate resource name
+        env:
+          APP_NAME: ${{ inputs.appName }}
+        shell: bash
+        run: |
+          if [[ ! "$APP_NAME" =~ ^[a-z0-9]{3,12}$ ]]; then
+            echo "::error::appName must contain 3-12 lowercase letters or digits."
+            exit 1
+          fi
 
       - name: Provision infrastructure (Bicep)
         id: infra
         env:
+          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
+          LOCATION: ${{ inputs.location }}
+          SWA_LOCATION: ${{ inputs.staticWebAppLocation }}
+          APP_NAME: ${{ inputs.appName }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        shell: bash
         run: |
-          az group create --name "${{ inputs.resourceGroup }}" --location "${{ inputs.location }}" --output none
-          out=$(az deployment group create \
-            --resource-group "${{ inputs.resourceGroup }}" \
+          set -euo pipefail
+
+          az group create \
+            --name "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --output none
+
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
             --template-file infra/azure/main.bicep \
-            --parameters appName="${{ inputs.appName }}" location="${{ inputs.location }}" staticWebAppLocation="${{ inputs.staticWebAppLocation }}" \
-                         mongodbUri="$MONGODB_URI" jwtSecret="$JWT_SECRET" \
-            --query properties.outputs --output json)
-          echo "apiName=$(echo "$out" | jq -r .apiName.value)" >> "$GITHUB_OUTPUT"
-          echo "apiUrl=$(echo "$out" | jq -r .apiUrl.value)" >> "$GITHUB_OUTPUT"
-          echo "swaName=$(echo "$out" | jq -r .staticWebAppName.value)" >> "$GITHUB_OUTPUT"
-          echo "frontendUrl=$(echo "$out" | jq -r .frontendUrl.value)" >> "$GITHUB_OUTPUT"
+            --parameters \
+              appName="$APP_NAME" \
+              location="$LOCATION" \
+              staticWebAppLocation="$SWA_LOCATION" \
+              mongodbUri="$MONGODB_URI" \
+              jwtSecret="$JWT_SECRET" \
+            --query properties.outputs \
+            --output json > deployment-outputs.json
+
+          api_name=$(jq -r '.apiName.value' deployment-outputs.json)
+          api_url=$(jq -r '.apiUrl.value' deployment-outputs.json)
+          swa_name=$(jq -r '.staticWebAppName.value' deployment-outputs.json)
+          frontend_url=$(jq -r '.frontendUrl.value' deployment-outputs.json)
+
+          if [[ -z "$api_name" || "$api_name" == "null" ||
+                -z "$api_url" || "$api_url" == "null" ||
+                -z "$swa_name" || "$swa_name" == "null" ||
+                -z "$frontend_url" || "$frontend_url" == "null" ]]; then
+            echo "::error::One or more required Bicep outputs are missing."
+            exit 1
+          fi
+
+          {
+            echo "apiName=$api_name"
+            echo "apiUrl=$api_url"
+            echo "swaName=$swa_name"
+            echo "frontendUrl=$frontend_url"
+          } >> "$GITHUB_OUTPUT"
+
+          rm -f deployment-outputs.json
 
       - name: Build API
         working-directory: backend
@@ -93,7 +156,7 @@ jobs:
           npm ci
           npm run build
 
-      - name: Seed demo data (only if the database is empty)
+      - name: Seed demo data (only if database is empty)
         if: ${{ inputs.seed }}
         working-directory: backend
         env:
@@ -104,11 +167,22 @@ jobs:
 
       - name: Package and deploy API
         working-directory: backend
+        env:
+          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
+          API_NAME: ${{ steps.infra.outputs.apiName }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           npm prune --omit=dev
           zip -qr ../api.zip dist node_modules package.json
-          az webapp deploy --resource-group "${{ inputs.resourceGroup }}" --name "${{ steps.infra.outputs.apiName }}" \
-            --src-path ../api.zip --type zip --restart true
+
+          az webapp deploy \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$API_NAME" \
+            --src-path ../api.zip \
+            --type zip \
+            --restart true
 
       - name: Build frontend
         working-directory: frontend
@@ -122,12 +196,28 @@ jobs:
 
       - name: Get Static Web App deployment token
         id: swa
+        env:
+          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
+          SWA_NAME: ${{ steps.infra.outputs.swaName }}
+        shell: bash
         run: |
-          token=$(az staticwebapp secrets list --name "${{ steps.infra.outputs.swaName }}" --resource-group "${{ inputs.resourceGroup }}" --query properties.apiKey -o tsv)
+          set -euo pipefail
+
+          token=$(az staticwebapp secrets list \
+            --name "$SWA_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.apiKey \
+            --output tsv)
+
+          if [ -z "$token" ] || [ "$token" == "null" ]; then
+            echo "::error::Could not retrieve the Static Web Apps deployment token."
+            exit 1
+          fi
+
           echo "::add-mask::$token"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy frontend to Static Web Apps
+      - name: Deploy frontend to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
@@ -137,12 +227,39 @@ jobs:
           skip_api_build: true
 
       - name: Smoke test
+        env:
+          API_URL: ${{ steps.infra.outputs.apiUrl }}
+          FRONTEND_URL: ${{ steps.infra.outputs.frontendUrl }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          api_healthy=false
+
           for i in $(seq 1 30); do
-            if curl -fsS "${{ steps.infra.outputs.apiUrl }}/api/health"; then echo; break; fi
-            echo "waiting for the API ($i)"; sleep 10
+            if curl --fail --silent --show-error \
+              "$API_URL/api/health"; then
+              echo
+              api_healthy=true
+              break
+            fi
+
+            echo "Waiting for API startup ($i/30)..."
+            sleep 10
           done
-          curl -fsS "${{ steps.infra.outputs.apiUrl }}/api/health"
-          curl -fsS -o /dev/null "${{ steps.infra.outputs.frontendUrl }}"
-          echo "Frontend: ${{ steps.infra.outputs.frontendUrl }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "API:      ${{ steps.infra.outputs.apiUrl }}/api" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$api_healthy" != true ]; then
+            echo "::error::API health check failed."
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            --output /dev/null "$FRONTEND_URL"
+
+          {
+            echo "## Deployment successful"
+            echo ""
+            echo "Frontend: $FRONTEND_URL"
+            echo ""
+            echo "API: $API_URL/api"
+          } >> "$GITHUB_STEP_SUMMARY"
