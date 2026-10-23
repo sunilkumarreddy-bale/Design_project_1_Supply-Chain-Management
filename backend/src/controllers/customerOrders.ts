@@ -6,7 +6,7 @@ import { snapshot } from '../utils/ids';
 import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
-import { dateLike, objectId, pageOf, paging, positiveQty } from '../middleware/validate';
+import { dateLike, objectId, pageOf, paging, positiveQty, nullableNumber } from '../middleware/validate';
 import { requireActiveWarehouse } from '../services/inventory';
 import { nextCustomerOrderNo } from '../services/counters';
 import { sendPage } from './helpers';
@@ -15,7 +15,7 @@ const line = z.object({
   product: objectId,
   quantity: positiveQty,
   quantityFulfilled: z.coerce.number().min(0).optional(),
-  unitPrice: z.union([z.coerce.number().min(0), z.null(), z.literal('')]).optional().transform((v) => (v === '' || v === undefined ? null : v)),
+  unitPrice: nullableNumber(z.coerce.number().min(0)).optional().transform((v) => v ?? null),
 });
 
 export const createOrderSchema = z.object({

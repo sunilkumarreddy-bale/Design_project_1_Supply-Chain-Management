@@ -22,6 +22,14 @@ export const dateLike = z
     return d;
   });
 
+/**
+ * A number that may be cleared. null and '' become null; they are matched before coercion, which would
+ * otherwise turn them into 0.
+ */
+export function nullableNumber(base: z.ZodTypeAny = z.coerce.number({ invalid_type_error: 'must be a number' })) {
+  return z.union([z.null(), z.literal('').transform(() => null), base]) as z.ZodType<number | null, z.ZodTypeDef, unknown>;
+}
+
 export const positiveQty = z.coerce.number({ invalid_type_error: 'must be a number' }).positive('must be greater than 0');
 export const nonNegative = z.coerce.number({ invalid_type_error: 'must be a number' }).min(0, 'must be 0 or more');
 

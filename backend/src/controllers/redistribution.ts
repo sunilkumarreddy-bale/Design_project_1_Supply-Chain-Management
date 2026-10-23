@@ -3,11 +3,11 @@ import { z } from 'zod';
 import { RedistributionPlan, REDISTRIBUTION_STATUSES, Transfer } from '../models';
 import { ApiError } from '../utils/apiError';
 import { currentUser } from '../middleware/auth';
-import { objectId, pageOf, paging } from '../middleware/validate';
+import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
 import * as svc from '../services/redistribution';
 import { sendPage } from './helpers';
 
-const margin = z.union([z.coerce.number().min(0, 'must be 0 or more'), z.null(), z.literal('')]).optional().transform((v) => (v === '' || v === undefined ? null : v));
+const margin = nullableNumber(z.coerce.number().min(0, 'must be 0 or more')).optional().transform((v) => v ?? null);
 
 export const analyzeSchema = z.object({ stockLevelId: objectId, minShelfLifeDays: margin });
 export const listPlansQuery = z.object({ ...paging, status: z.enum(REDISTRIBUTION_STATUSES).optional() });

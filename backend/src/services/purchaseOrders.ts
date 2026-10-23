@@ -20,6 +20,7 @@ import {
   PlanningProduct,
   posKey,
   rebalanceForProduct,
+  trackedProductsAt,
 } from './planning';
 import { nextPoNumber } from './counters';
 import { raiseAlert, resolveAlerts, evaluateStockAlerts } from './alerts';
@@ -44,7 +45,7 @@ function requireStatus(po: { status: string; poNumber: string }, allowed: string
 const totalOf = (po: { items: { quantityOrdered: number; unitCost?: number | null }[] }) =>
   po.items.reduce((s, i) => s + i.quantityOrdered * (i.unitCost ?? 0), 0);
 
-async function announcePending(po: PODoc) {
+export async function announcePending(po: PODoc) {
   const supplier = await Supplier.findById(po.supplier).select('name').lean();
   await raiseAlert({
     type: 'po_pending_approval',
@@ -148,7 +149,8 @@ export async function autoDraft(warehouseId: string, user: AuthUser): Promise<Au
   const allWh = await Warehouse.find({ isActive: true }).select('code name').lean();
   const names = new Map(allWh.map((w) => [w._id.toHexString(), { code: w.code, name: w.name }]));
   const ref = (id: string) => ({ _id: id, ...names.get(id)! });
-  const products = await loadPlanningProducts();
+  const tracked = await trackedProductsAt(warehouseId);
+  const products = (await loadPlanningProducts()).filter((p) => tracked.has(p._id.toHexString()));
   const ids = products.map((p) => p._id);
   const [oh, oo, dm] = await Promise.all([onHandMap(ids, [warehouseId]), onOrderMap(ids, [warehouseId]), demandMap(products, [warehouseId])]);
 
@@ -530,7 +532,7 @@ export async function cancelPO(id: string, user: AuthUser) {
 }
 
 export async function payPO(id: string, user: AuthUser) {
-  if (!paymentsEnabled()) throw ApiError.forbidden('Payments are disabled (set ENABLE_PAYMENTS=true)');
+  if (!paymentsEnabled()) throw new ApiError(400, 'Payments are disabled (set ENABLE_PAYMENTS=true)', 'FEATURE_DISABLED');
   const po = await loadPO(id);
   requireStatus(po, ['approved', 'confirmed', 'dispatched', 'partially_received', 'received'], 'pay');
   if (po.payment?.status && po.payment.status !== 'none') throw ApiError.conflict(`${po.poNumber} already has a ${po.payment.status} payment`);
