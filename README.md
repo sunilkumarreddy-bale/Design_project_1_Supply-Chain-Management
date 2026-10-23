@@ -249,6 +249,11 @@ compiled production build before drawing conclusions.
 
 ## Deployment
 
+**Azure**: Bicep template + one-click GitHub Actions workflow (App Service for the API, Static Web Apps for the
+SPA, MongoDB Atlas on Azure). See [docs/DEPLOY_AZURE.md](docs/DEPLOY_AZURE.md). The template compiles and lints with
+Bicep 0.30; the workflow has not been run against a subscription yet.
+
+
 ### API on AWS EC2 (Ubuntu 22.04/24.04)
 
 1. **Security group**: allow 22 from your IP, 80 and 443 from anywhere; do not open 4000.

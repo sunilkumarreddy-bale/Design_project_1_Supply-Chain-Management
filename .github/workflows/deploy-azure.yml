@@ -1,0 +1,125 @@
+name: Deploy to Azure
+
+# Run manually from the Actions tab. Needs these repository secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  (OIDC federated credential, see docs/DEPLOY_AZURE.md)
+#   MONGODB_URI   (MongoDB Atlas connection string; a replica set is required for transactions)
+#   JWT_SECRET    (long random string)
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroup:
+        description: Resource group (created if missing)
+        default: rg-smart-inventory
+        required: true
+      location:
+        description: Region for the API
+        default: centralindia
+        required: true
+      appName:
+        description: Resource name prefix (3-12 lowercase letters/digits)
+        default: smartinv
+        required: true
+      seed:
+        description: Seed the demo data if the database is empty
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision infrastructure (Bicep)
+        id: infra
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          az group create --name "${{ inputs.resourceGroup }}" --location "${{ inputs.location }}" --output none
+          out=$(az deployment group create \
+            --resource-group "${{ inputs.resourceGroup }}" \
+            --template-file infra/azure/main.bicep \
+            --parameters appName="${{ inputs.appName }}" location="${{ inputs.location }}" \
+                         mongodbUri="$MONGODB_URI" jwtSecret="$JWT_SECRET" \
+            --query properties.outputs --output json)
+          echo "apiName=$(echo "$out" | jq -r .apiName.value)" >> "$GITHUB_OUTPUT"
+          echo "apiUrl=$(echo "$out" | jq -r .apiUrl.value)" >> "$GITHUB_OUTPUT"
+          echo "swaName=$(echo "$out" | jq -r .staticWebAppName.value)" >> "$GITHUB_OUTPUT"
+          echo "frontendUrl=$(echo "$out" | jq -r .frontendUrl.value)" >> "$GITHUB_OUTPUT"
+
+      - name: Build API
+        working-directory: backend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Seed demo data (only if the database is empty)
+        if: ${{ inputs.seed }}
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          NODE_ENV: production
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: node dist/seed/seed.js --if-empty
+
+      - name: Package and deploy API
+        working-directory: backend
+        run: |
+          npm prune --omit=dev
+          zip -qr ../api.zip dist node_modules package.json
+          az webapp deploy --resource-group "${{ inputs.resourceGroup }}" --name "${{ steps.infra.outputs.apiName }}" \
+            --src-path ../api.zip --type zip --restart true
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ steps.infra.outputs.apiUrl }}/api
+          VITE_SOCKET_URL: ${{ steps.infra.outputs.apiUrl }}
+          VITE_GOOGLE_MAPS_KEY: ${{ secrets.VITE_GOOGLE_MAPS_KEY }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Get Static Web App deployment token
+        id: swa
+        run: |
+          token=$(az staticwebapp secrets list --name "${{ steps.infra.outputs.swaName }}" --resource-group "${{ inputs.resourceGroup }}" --query properties.apiKey -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy frontend to Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
+          action: upload
+          app_location: frontend/dist
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "${{ steps.infra.outputs.apiUrl }}/api/health"; then echo; break; fi
+            echo "waiting for the API ($i)"; sleep 10
+          done
+          curl -fsS "${{ steps.infra.outputs.apiUrl }}/api/health"
+          curl -fsS -o /dev/null "${{ steps.infra.outputs.frontendUrl }}"
+          echo "Frontend: ${{ steps.infra.outputs.frontendUrl }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "API:      ${{ steps.infra.outputs.apiUrl }}/api" >> "$GITHUB_STEP_SUMMARY"
