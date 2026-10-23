@@ -66,7 +66,7 @@ export async function run(req: Request, res: Response) {
     },
     currentUser(req),
   );
-  res.status(201).json(r.toJSON());
+  res.status(201).json(await SimulationRun.findById(r._id).populate('ranBy', 'name').lean());
 }
 
 export async function listRuns(req: Request, res: Response) {

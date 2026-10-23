@@ -259,7 +259,8 @@ export async function autoDraft(warehouseId: string, user: AuthUser): Promise<Au
     emitAll('po:created', po.toJSON());
     await announcePending(po);
     for (const l of lines) await evaluateStockAlerts(l.product._id, warehouseId);
-    result.created.push(po.toJSON());
+    const populated = await PurchaseOrder.findById(po._id).populate('supplier', 'name').populate('warehouse', 'code name').populate('items.product', 'sku name unit');
+    result.created.push(populated!.toJSON());
   }
   return result;
 }
