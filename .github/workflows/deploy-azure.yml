@@ -1,9 +1,10 @@
 name: Deploy to Azure
 
 # Run manually from the Actions tab. Needs these repository secrets:
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID  (OIDC federated credential, see docs/DEPLOY_AZURE.md)
-#   MONGODB_URI   (MongoDB Atlas connection string; a replica set is required for transactions)
-#   JWT_SECRET    (long random string)
+#   AZURE_CREDENTIALS  JSON from `az ad sp create-for-rbac` mapped to {clientId, clientSecret, tenantId, subscriptionId}
+#                      (or AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID for an OIDC federated credential)
+#   MONGODB_URI        MongoDB connection string (replica set, e.g. Atlas; required for transactions)
+#   JWT_SECRET         long random string
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +16,11 @@ on:
         description: Region for the API
         default: centralindia
         required: true
+      staticWebAppLocation:
+        description: Region for the frontend (Static Web Apps regions only)
+        type: choice
+        options: [eastasia, centralus, eastus2, westus2, westeurope]
+        default: eastasia
       appName:
         description: Resource name prefix (3-12 lowercase letters/digits)
         default: smartinv
@@ -32,6 +38,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+    env:
+      HAS_SP_CREDS: ${{ secrets.AZURE_CREDENTIALS != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,12 +47,27 @@ jobs:
         with:
           node-version: 20
 
+      - name: Azure login (service principal secret)
+        if: ${{ env.HAS_SP_CREDS == 'true' }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Azure login (OIDC)
+        if: ${{ env.HAS_SP_CREDS != 'true' }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check required secrets
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          [ -n "$MONGODB_URI" ] || { echo "::error::Add the MONGODB_URI secret"; exit 1; }
+          [ -n "$JWT_SECRET" ] || { echo "::error::Add the JWT_SECRET secret"; exit 1; }
 
       - name: Provision infrastructure (Bicep)
         id: infra
@@ -56,7 +79,7 @@ jobs:
           out=$(az deployment group create \
             --resource-group "${{ inputs.resourceGroup }}" \
             --template-file infra/azure/main.bicep \
-            --parameters appName="${{ inputs.appName }}" location="${{ inputs.location }}" \
+            --parameters appName="${{ inputs.appName }}" location="${{ inputs.location }}" staticWebAppLocation="${{ inputs.staticWebAppLocation }}" \
                          mongodbUri="$MONGODB_URI" jwtSecret="$JWT_SECRET" \
             --query properties.outputs --output json)
           echo "apiName=$(echo "$out" | jq -r .apiName.value)" >> "$GITHUB_OUTPUT"
