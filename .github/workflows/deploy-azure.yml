@@ -6,15 +6,15 @@ on:
     inputs:
       resourceGroup:
         description: Resource group (created if missing)
+        type: string
         default: rg-smart-inventory
         required: true
-        type: string
 
       location:
         description: Azure region for the API
+        type: string
         default: centralindia
         required: true
-        type: string
 
       staticWebAppLocation:
         description: Region for Azure Static Web Apps
@@ -26,12 +26,13 @@ on:
           - westus2
           - westeurope
         default: eastasia
+        required: true
 
       appName:
         description: Resource name prefix (3-12 lowercase letters/digits)
+        type: string
         default: smartinv
         required: true
-        type: string
 
       seed:
         description: Seed demo data if the database is empty
@@ -56,7 +57,7 @@ jobs:
         with:
           node-version: 20
 
-      # Azure authentication using OIDC (no client secret required)
+      # OIDC authentication: no Azure client secret in GitHub
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -64,34 +65,36 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Verify Azure subscription
+      - name: Verify Azure account
+        shell: bash
         run: |
+          set -euo pipefail
           az account show \
             --query "{subscription:name, subscriptionId:id, tenantId:tenantId}" \
             --output table
 
       - name: Check required secrets
+        shell: bash
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "$MONGODB_URI" ]; then
-            echo "::error::Add the MONGODB_URI repository secret."
+          if [[ -z "$MONGODB_URI" ]]; then
+            echo "::error::Missing MONGODB_URI repository secret."
             exit 1
           fi
 
-          if [ -z "$JWT_SECRET" ]; then
-            echo "::error::Add the JWT_SECRET repository secret."
+          if [[ -z "$JWT_SECRET" ]]; then
+            echo "::error::Missing JWT_SECRET repository secret."
             exit 1
           fi
 
-      - name: Validate resource name
+      - name: Validate app name
+        shell: bash
         env:
           APP_NAME: ${{ inputs.appName }}
-        shell: bash
         run: |
           if [[ ! "$APP_NAME" =~ ^[a-z0-9]{3,12}$ ]]; then
             echo "::error::appName must contain 3-12 lowercase letters or digits."
@@ -100,6 +103,7 @@ jobs:
 
       - name: Provision infrastructure (Bicep)
         id: infra
+        shell: bash
         env:
           RESOURCE_GROUP: ${{ inputs.resourceGroup }}
           LOCATION: ${{ inputs.location }}
@@ -107,7 +111,6 @@ jobs:
           APP_NAME: ${{ inputs.appName }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -128,16 +131,14 @@ jobs:
             --query properties.outputs \
             --output json > deployment-outputs.json
 
-          api_name=$(jq -r '.apiName.value' deployment-outputs.json)
-          api_url=$(jq -r '.apiUrl.value' deployment-outputs.json)
-          swa_name=$(jq -r '.staticWebAppName.value' deployment-outputs.json)
-          frontend_url=$(jq -r '.frontendUrl.value' deployment-outputs.json)
+          api_name=$(jq -r '.apiName.value // empty' deployment-outputs.json)
+          api_url=$(jq -r '.apiUrl.value // empty' deployment-outputs.json)
+          swa_name=$(jq -r '.staticWebAppName.value // empty' deployment-outputs.json)
+          frontend_url=$(jq -r '.frontendUrl.value // empty' deployment-outputs.json)
 
-          if [[ -z "$api_name" || "$api_name" == "null" ||
-                -z "$api_url" || "$api_url" == "null" ||
-                -z "$swa_name" || "$swa_name" == "null" ||
-                -z "$frontend_url" || "$frontend_url" == "null" ]]; then
-            echo "::error::One or more required Bicep outputs are missing."
+          if [[ -z "$api_name" || -z "$api_url" ||
+                -z "$swa_name" || -z "$frontend_url" ]]; then
+            echo "::error::Missing required Bicep deployment outputs."
             exit 1
           fi
 
@@ -161,16 +162,16 @@ jobs:
         working-directory: backend
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          NODE_ENV: production
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          NODE_ENV: production
         run: node dist/seed/seed.js --if-empty
 
       - name: Package and deploy API
         working-directory: backend
+        shell: bash
         env:
           RESOURCE_GROUP: ${{ inputs.resourceGroup }}
           API_NAME: ${{ steps.infra.outputs.apiName }}
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -194,12 +195,12 @@ jobs:
           npm ci
           npm run build
 
-      - name: Get Static Web App deployment token
+      - name: Get Static Web Apps deployment token
         id: swa
+        shell: bash
         env:
           RESOURCE_GROUP: ${{ inputs.resourceGroup }}
           SWA_NAME: ${{ steps.infra.outputs.swaName }}
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -209,8 +210,8 @@ jobs:
             --query properties.apiKey \
             --output tsv)
 
-          if [ -z "$token" ] || [ "$token" == "null" ]; then
-            echo "::error::Could not retrieve the Static Web Apps deployment token."
+          if [[ -z "$token" || "$token" == "null" ]]; then
+            echo "::error::Unable to retrieve the Static Web Apps deployment token."
             exit 1
           fi
 
@@ -227,10 +228,10 @@ jobs:
           skip_api_build: true
 
       - name: Smoke test
+        shell: bash
         env:
           API_URL: ${{ steps.infra.outputs.apiUrl }}
           FRONTEND_URL: ${{ steps.infra.outputs.frontendUrl }}
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -248,8 +249,8 @@ jobs:
             sleep 10
           done
 
-          if [ "$api_healthy" != true ]; then
-            echo "::error::API health check failed."
+          if [[ "$api_healthy" != true ]]; then
+            echo "::error::API health check failed after 30 attempts."
             exit 1
           fi
 
@@ -258,8 +259,8 @@ jobs:
 
           {
             echo "## Deployment successful"
-            echo ""
+            echo
             echo "Frontend: $FRONTEND_URL"
-            echo ""
+            echo
             echo "API: $API_URL/api"
           } >> "$GITHUB_STEP_SUMMARY"
