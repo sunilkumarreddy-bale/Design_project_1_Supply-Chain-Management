@@ -231,6 +231,19 @@ export async function minStockAt(product: PlanningProduct, warehouseId: Id, dema
   return { minStock: minStockFor(policy?.minStock ?? null, ss), maxStock: policy?.maxStock ?? null, policy };
 }
 
+/**
+ * Products tracked at a warehouse: they have a stock line (even empty), a stock policy or demand history there.
+ * Untracked products are left out of per-warehouse reordering so a warehouse never orders items it does not carry.
+ */
+export async function trackedProductsAt(warehouseId: Id): Promise<Set<string>> {
+  const [lines, policies, history] = await Promise.all([
+    StockLevel.distinct('product', { warehouse: warehouseId }),
+    StockPolicy.distinct('product', { warehouse: warehouseId }),
+    DemandHistory.distinct('product', { warehouse: warehouseId }),
+  ]);
+  return new Set([...lines, ...policies, ...history].map((p) => idStr(p)!));
+}
+
 /** Warehouses where the product is tracked: it has stock lines or a stock policy. */
 export async function trackedWarehouses(productId: Id): Promise<string[]> {
   const [lines, policies] = await Promise.all([
@@ -295,7 +308,11 @@ export async function rebalanceSuggestions(productId?: Id): Promise<RebalanceSug
 export type InsightStatus = 'reorder' | 'overstock' | 'no_demand' | 'ok';
 
 export async function buildInsights(warehouseId: Id | null, now = new Date()) {
-  const products = await loadPlanningProducts();
+  let products = await loadPlanningProducts();
+  if (warehouseId) {
+    const tracked = await trackedProductsAt(warehouseId);
+    products = products.filter((p) => tracked.has(p._id.toHexString()));
+  }
   const whs = warehouseId ? [warehouseId] : undefined;
   const ids = products.map((p) => p._id);
   const [oh, oo, dm] = await Promise.all([

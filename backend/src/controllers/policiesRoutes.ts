@@ -6,11 +6,11 @@ import { snapshot } from '../utils/ids';
 import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
-import { objectId } from '../middleware/validate';
+import { objectId, nullableNumber } from '../middleware/validate';
 import { estimateBetween } from '../services/routes';
 import { requireActiveProduct } from '../services/inventory';
 
-const nullableQty = z.union([z.coerce.number().min(0, 'must be 0 or more'), z.null(), z.literal('')]).transform((v) => (v === '' ? null : v));
+const nullableQty = nullableNumber(z.coerce.number().min(0, 'must be 0 or more'));
 
 export const listPoliciesQuery = z.object({ product: objectId.optional(), warehouse: objectId.optional() });
 export const putPolicySchema = z
@@ -51,7 +51,7 @@ export const putRouteSchema = z
     toWarehouse: objectId,
     leadTimeDays: z.coerce.number().min(0, 'must be 0 or more'),
     costPerUnit: z.coerce.number().min(0, 'must be 0 or more'),
-    distanceKm: z.union([z.coerce.number().min(0), z.null()]).optional(),
+    distanceKm: nullableNumber(z.coerce.number().min(0)).optional(),
   })
   .refine((v) => v.fromWarehouse !== v.toWarehouse, { message: 'must differ from fromWarehouse', path: ['toWarehouse'] });
 

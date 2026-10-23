@@ -7,7 +7,7 @@ import { snapshot } from '../utils/ids';
 import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
-import { objectId, pageOf, paging } from '../middleware/validate';
+import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
 import { addToLine, afterStockChange, requireActiveWarehouse } from '../services/inventory';
 import { nextCountNo } from '../services/counters';
 import { raiseAlert } from '../services/alerts';
@@ -27,7 +27,7 @@ export const updateCountSchema = z.object({
   lines: z.array(
     z.object({
       _id: objectId,
-      countedQty: z.union([z.coerce.number().min(0, 'must be 0 or more'), z.null()]),
+      countedQty: nullableNumber(z.coerce.number().min(0, 'must be 0 or more')),
       reason: z.string().max(300).optional(),
     }),
   ),

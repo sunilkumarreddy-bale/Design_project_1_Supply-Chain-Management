@@ -6,14 +6,14 @@ import { snapshot } from '../utils/ids';
 import { qrDataUrl } from '../utils/qrcode';
 import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
-import { objectId, optionalObjectId, pageOf, paging } from '../middleware/validate';
+import { objectId, optionalObjectId, pageOf, paging, nullableNumber } from '../middleware/validate';
 import { uploadFile } from '../integrations/storage';
 import { resolveLeadTime } from '../engines/reorder';
 import { explainProductAt, onHandMap, supplierInput } from '../services/planning';
 import { escapeRegex, sendPage } from './helpers';
 
 const nonNeg = (label = 'must be 0 or more') => z.coerce.number({ invalid_type_error: 'must be a number' }).min(0, label);
-const nullableNonNeg = z.union([z.coerce.number().min(0, 'must be 0 or more'), z.null(), z.literal('')]).transform((v) => (v === '' ? null : v));
+const nullableNonNeg = nullableNumber(z.coerce.number().min(0, 'must be 0 or more'));
 
 const productFields = {
   sku: z.string().trim().min(1, 'is required').max(40).transform((s) => s.toUpperCase()),

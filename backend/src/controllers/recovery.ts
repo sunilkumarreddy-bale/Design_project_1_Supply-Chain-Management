@@ -3,11 +3,11 @@ import { z } from 'zod';
 import { PurchaseOrder, RecoveryPlan, RECOVERY_STATUSES, Transfer } from '../models';
 import { ApiError } from '../utils/apiError';
 import { currentUser } from '../middleware/auth';
-import { objectId, pageOf, paging } from '../middleware/validate';
+import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
 import * as svc from '../services/recovery';
 import { sendPage } from './helpers';
 
-const optionalPositive = z.union([z.coerce.number().positive('must be greater than 0'), z.null(), z.literal('')]).optional().transform((v) => (v === '' || v === undefined ? null : v));
+const optionalPositive = nullableNumber(z.coerce.number().positive('must be greater than 0')).optional().transform((v) => v ?? null);
 
 export const analysisInputSchema = z.object({
   product: objectId,
@@ -19,7 +19,7 @@ export const analysisInputSchema = z.object({
     .object({
       kind: z.enum(['supplier_delay', 'shortage_alert', 'manual']),
       supplier: z.union([objectId, z.null()]).optional(),
-      delayDays: z.union([z.coerce.number(), z.null()]).optional(),
+      delayDays: nullableNumber().optional(),
     })
     .nullable()
     .optional(),
