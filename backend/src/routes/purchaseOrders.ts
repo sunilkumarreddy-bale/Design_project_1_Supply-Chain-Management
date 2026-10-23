@@ -1,0 +1,20 @@
+import { Router } from 'express';
+import { asyncHandler as h } from '../utils/asyncHandler';
+import { INTERNAL_ROLES, MANAGERS, requireRole } from '../middleware/rbac';
+import { idParam, validate } from '../middleware/validate';
+import * as c from '../controllers/purchaseOrders';
+
+const r = Router();
+r.get('/', validate({ query: c.listPOQuery }), h(c.listPOs));
+r.post('/', requireRole(...MANAGERS), validate({ body: c.createPOSchema }), h(c.createPO));
+r.post('/auto-draft', requireRole(...MANAGERS), validate({ body: c.autoDraftSchema }), h(c.autoDraftPOs));
+r.get('/:id', validate(idParam), h(c.getPO));
+r.post('/:id/submit', requireRole(...MANAGERS), validate(idParam), h(c.submitPO));
+r.post('/:id/approve', requireRole('admin'), validate(idParam), h(c.approvePO));
+r.post('/:id/reject', requireRole('admin'), validate({ ...idParam, body: c.rejectSchema }), h(c.rejectPO));
+r.post('/:id/confirm', requireRole('supplier'), validate({ ...idParam, body: c.confirmSchema }), h(c.confirmPO));
+r.post('/:id/dispatch', requireRole('supplier'), validate({ ...idParam, body: c.dispatchSchema }), h(c.dispatchPO));
+r.post('/:id/receive', requireRole(...INTERNAL_ROLES), validate({ ...idParam, body: c.receiveSchema }), h(c.receivePO));
+r.post('/:id/cancel', requireRole('admin'), validate(idParam), h(c.cancelPO));
+r.post('/:id/pay', requireRole('admin'), validate(idParam), h(c.payPO));
+export default r;
