@@ -1,52 +1,22 @@
 
-name: Deploy to Azure
+name: Deploy Smart Inventory API to Azure App Service
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      resourceGroup:
-        description: Resource group (created if missing)
-        type: string
-        default: rg-smart-inventory
-        required: true
-
-      location:
-        description: Azure region for the API
-        type: string
-        default: centralindia
-        required: true
-
-      staticWebAppLocation:
-        description: Region for Azure Static Web Apps
-        type: choice
-        options:
-          - eastasia
-          - centralus
-          - eastus2
-          - westus2
-          - westeurope
-        default: eastasia
-        required: true
-
-      appName:
-        description: Resource name prefix (3-12 lowercase letters/digits)
-        type: string
-        default: smartinv
-        required: true
-
-      seed:
-        description: Seed demo data if the database is empty
-        type: boolean
-        default: true
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+
+    env:
+      BACKEND_DIR: backend
 
     steps:
       - name: Checkout repository
@@ -55,213 +25,37 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
-      # OIDC authentication: no Azure client secret in GitHub
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Build backend
+        working-directory: backend
+        run: |
+          if npm run | grep -qE '^[[:space:]]+build([[:space:]]|$)'; then
+            npm run build
+          else
+            echo "No build script found; skipping build."
+          fi
+
+      - name: Prepare deployment package
+        run: |
+          mkdir -p deploy-package
+          rsync -a \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=.env \
+            backend/ deploy-package/
+          cd deploy-package
+          zip -qr ../smart-inventory-api.zip .
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          allow-no-subscriptions: true
-
-      - name: Verify Azure account
-        shell: bash
-        run: |
-          set -euo pipefail
-          az account show \
-            --query "{subscription:name, subscriptionId:id, tenantId:tenantId}" \
-            --output table
-
-      - name: Check required secrets
-        shell: bash
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "$MONGODB_URI" ]]; then
-            echo "::error::Missing MONGODB_URI repository secret."
-            exit 1
-          fi
-
-          if [[ -z "$JWT_SECRET" ]]; then
-            echo "::error::Missing JWT_SECRET repository secret."
-            exit 1
-          fi
-
-      - name: Validate app name
-        shell: bash
-        env:
-          APP_NAME: ${{ inputs.appName }}
-        run: |
-          if [[ ! "$APP_NAME" =~ ^[a-z0-9]{3,12}$ ]]; then
-            echo "::error::appName must contain 3-12 lowercase letters or digits."
-            exit 1
-          fi
-
-      - name: Provision infrastructure (Bicep)
-        id: infra
-        shell: bash
-        env:
-          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
-          LOCATION: ${{ inputs.location }}
-          SWA_LOCATION: ${{ inputs.staticWebAppLocation }}
-          APP_NAME: ${{ inputs.appName }}
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        run: |
-          set -euo pipefail
-
-          az group create \
-            --name "$RESOURCE_GROUP" \
-            --location "$LOCATION" \
-            --output none
-
-          az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --template-file infra/azure/main.bicep \
-            --parameters \
-              appName="$APP_NAME" \
-              location="$LOCATION" \
-              staticWebAppLocation="$SWA_LOCATION" \
-              mongodbUri="$MONGODB_URI" \
-              jwtSecret="$JWT_SECRET" \
-            --query properties.outputs \
-            --output json > deployment-outputs.json
-
-          api_name=$(jq -r '.apiName.value // empty' deployment-outputs.json)
-          api_url=$(jq -r '.apiUrl.value // empty' deployment-outputs.json)
-          swa_name=$(jq -r '.staticWebAppName.value // empty' deployment-outputs.json)
-          frontend_url=$(jq -r '.frontendUrl.value // empty' deployment-outputs.json)
-
-          if [[ -z "$api_name" || -z "$api_url" ||
-                -z "$swa_name" || -z "$frontend_url" ]]; then
-            echo "::error::Missing required Bicep deployment outputs."
-            exit 1
-          fi
-
-          {
-            echo "apiName=$api_name"
-            echo "apiUrl=$api_url"
-            echo "swaName=$swa_name"
-            echo "frontendUrl=$frontend_url"
-          } >> "$GITHUB_OUTPUT"
-
-          rm -f deployment-outputs.json
-
-      - name: Build API
-        working-directory: backend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Seed demo data (only if database is empty)
-        if: ${{ inputs.seed }}
-        working-directory: backend
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          NODE_ENV: production
-        run: node dist/seed/seed.js --if-empty
-
-      - name: Package and deploy API
-        working-directory: backend
-        shell: bash
-        env:
-          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
-          API_NAME: ${{ steps.infra.outputs.apiName }}
-        run: |
-          set -euo pipefail
-
-          npm prune --omit=dev
-          zip -qr ../api.zip dist node_modules package.json
-
-          az webapp deploy \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$API_NAME" \
-            --src-path ../api.zip \
-            --type zip \
-            --restart true
-
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          VITE_API_URL: ${{ steps.infra.outputs.apiUrl }}/api
-          VITE_SOCKET_URL: ${{ steps.infra.outputs.apiUrl }}
-          VITE_GOOGLE_MAPS_KEY: ${{ secrets.VITE_GOOGLE_MAPS_KEY }}
-        run: |
-          npm ci
-          npm run build
-
-      - name: Get Static Web Apps deployment token
-        id: swa
-        shell: bash
-        env:
-          RESOURCE_GROUP: ${{ inputs.resourceGroup }}
-          SWA_NAME: ${{ steps.infra.outputs.swaName }}
-        run: |
-          set -euo pipefail
-
-          token=$(az staticwebapp secrets list \
-            --name "$SWA_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query properties.apiKey \
-            --output tsv)
-
-          if [[ -z "$token" || "$token" == "null" ]]; then
-            echo "::error::Unable to retrieve the Static Web Apps deployment token."
-            exit 1
-          fi
-
-          echo "::add-mask::$token"
-          echo "token=$token" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy frontend to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
-          action: upload
-          app_location: frontend/dist
-          skip_app_build: true
-          skip_api_build: true
-
-      - name: Smoke test
-        shell: bash
-        env:
-          API_URL: ${{ steps.infra.outputs.apiUrl }}
-          FRONTEND_URL: ${{ steps.infra.outputs.frontendUrl }}
-        run: |
-          set -euo pipefail
-
-          api_healthy=false
-
-          for i in $(seq 1 30); do
-            if curl --fail --silent --show-error \
-              "$API_URL/api/health"; then
-              echo
-              api_healthy=true
-              break
-            fi
-
-            echo "Waiting for API startup ($i/30)..."
-            sleep 10
-          done
-
-          if [[ "$api_healthy" != true ]]; then
-            echo "::error::API health check failed after 30 attempts."
-            exit 1
-          fi
-
-          curl --fail --silent --show-error \
-            --output /dev/null "$FRONTEND_URL"
-
-          {
-            echo "## Deployment successful"
-            echo
-            echo "Frontend: $FRONTEND_URL"
-            echo
-            echo "API: $API_URL/api"
-          } >> "$GITHUB_STEP_SUMMARY"
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: smart-inventory-api.zip
