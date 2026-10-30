@@ -6,6 +6,7 @@ import { closeSockets, initSockets } from './sockets';
 import { checkOverduePOs, sweepExpiry } from './services/alerts';
 import { auditIdle } from './middleware/audit';
 import { flushNotifications } from './services/notifications';
+import { runExpiryJob } from './services/stockService';
 
 async function main() {
   await connectDB();
@@ -19,6 +20,7 @@ async function main() {
       try {
         await sweepExpiry();
         await checkOverduePOs();
+        await runExpiryJob();
       } catch (e) {
         console.error('scheduled checks failed', e);
       }

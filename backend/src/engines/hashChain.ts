@@ -111,3 +111,14 @@ export function verifyChain(entries: ChainEntry[]): VerifyResult {
   for (const e of entries) if (!v.next(e)) break;
   return v.result();
 }
+
+/**
+ * Hash for a chain other than the global audit log. The scope name is hashed together with the payload,
+ * so an entry from one chain (for example a Stock DNA gene, scope "dna") can never verify inside another.
+ * The audit log keeps computeHash above unchanged so existing entries still verify.
+ */
+export function scopedHash(scope: string, prevHash: string, payload: unknown): string {
+  return createHash('sha256')
+    .update(prevHash + '|' + canonicalize({ scope, payload }))
+    .digest('hex');
+}
