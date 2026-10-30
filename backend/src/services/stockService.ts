@@ -21,7 +21,7 @@ import { withTransaction } from '../config/db';
 import { env } from '../config/env';
 import { ApiError } from '../utils/apiError';
 import { idStr } from '../utils/ids';
-import { recordAudit } from '../middleware/audit';
+import { recordAudit, serialWrite } from '../middleware/audit';
 import type { AuthUser } from '../middleware/auth';
 import { GENESIS_HASH } from '../engines/hashChain';
 import {
@@ -89,12 +89,15 @@ export async function runStock<T>(
   at?: Date,
 ): Promise<{ result: T; genes: GeneRecord[] }> {
   let ctxOut: StockCtx | null = null;
-  const result = await withTransaction(async (session) => {
-    // a fresh context per attempt: a retried transaction must not replay the after-commit work twice
-    const ctx: StockCtx = { session, actor, approvedBy, after: [], genes: [], at };
-    ctxOut = ctx;
-    return fn(ctx);
-  });
+  // queued with the audit writes: each transaction anchors its genes in the one audit chain
+  const result = await serialWrite(() =>
+    withTransaction(async (session) => {
+      // a fresh context per attempt: a retried transaction must not replay the after-commit work twice
+      const ctx: StockCtx = { session, actor, approvedBy, after: [], genes: [], at };
+      ctxOut = ctx;
+      return fn(ctx);
+    }),
+  );
   const ctx = ctxOut as unknown as StockCtx;
   for (const job of ctx.after) {
     try {

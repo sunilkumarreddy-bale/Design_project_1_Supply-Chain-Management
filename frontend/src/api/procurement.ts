@@ -92,7 +92,13 @@ export const procurementApi = api.injectEndpoints({
       invalidatesTags: ['PO'],
     }),
     receivePO: b.mutation<
-      { purchaseOrder: PurchaseOrder; shortLines: { product: string; outstanding: number; received: number }[]; discrepancies: unknown[]; leadTimeSample: { days: number; onTime: boolean } | null },
+      {
+        purchaseOrder: PurchaseOrder;
+        shortLines: { product: string; outstanding: number; received: number }[];
+        discrepancies: unknown[];
+        leadTimeSample: { days: number; onTime: boolean } | null;
+        dnaLots: { product: string; lot: string; dnaCode: string; quantity: number; created: boolean }[];
+      },
       { id: string } & POReceiveInput
     >({
       query: ({ id, ...data }) => ({ url: `/purchase-orders/${id}/receive`, method: 'POST', data }),

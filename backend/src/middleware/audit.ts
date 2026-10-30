@@ -30,7 +30,17 @@ let tail: Promise<unknown> = Promise.resolve();
  */
 export function recordAudit(input: AuditInput, session?: ClientSession) {
   if (session) return write(input, session);
-  const run = tail.then(() => withTransaction((s) => write(input, s)));
+  return serialWrite(() => withTransaction((s) => write(input, s)));
+}
+
+/**
+ * Runs writes that append to the audit chain one at a time within this process. Every such write takes
+ * the single Counter("audit") document, so letting them overlap only produces MongoDB write conflicts and
+ * retry storms (measured: p95 16.7 s at 30 concurrent writers before this queue, see docs/LOAD_RESULTS.md).
+ * Work queued here must not itself wait for another serialWrite (it would wait for itself).
+ */
+export function serialWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tail.then(fn);
   tail = run.catch(() => undefined);
   return run;
 }

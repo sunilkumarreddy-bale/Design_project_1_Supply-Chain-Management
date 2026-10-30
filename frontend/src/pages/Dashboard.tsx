@@ -10,6 +10,7 @@ import Badge from '../components/Badge';
 import DataTable from '../components/DataTable';
 import QueryState from '../components/QueryState';
 import StatCard from '../components/StatCard';
+import DnaCards from '../components/dna/DnaCards';
 import SupplierPOActions from '../components/po/SupplierPOActions';
 import { setSelectedWarehouse } from '../features/auth/authSlice';
 import { useAction } from '../hooks/useAction';
@@ -200,6 +201,7 @@ export default function Dashboard() {
           <StatCard label="Stock value" value={rupees(o?.stockValue, true)} loading={overview.isLoading} />
         </div>
       )}
+      <DnaCards />
       <div className="grid grid-2">
         <div className="card">
           <div className="card-head">

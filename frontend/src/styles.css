@@ -1206,3 +1206,252 @@ textarea {
 .table td strong {
   white-space: nowrap;
 }
+
+/* Stock DNA */
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+.badge-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.life-bar {
+  margin-bottom: 12px;
+}
+.life-bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
+.life-bar-track {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--grey-soft);
+  overflow: hidden;
+  margin: 4px 0;
+}
+.life-bar-fill {
+  height: 100%;
+  background: var(--navy);
+}
+.life-bar-qty .life-bar-fill {
+  background: var(--success);
+}
+.life-bar-warn .life-bar-fill {
+  background: var(--maroon);
+}
+.mini-bar {
+  display: inline-block;
+  width: 64px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--grey-soft);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.mini-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--navy);
+}
+.mini-bar-warn {
+  background: var(--maroon);
+}
+.counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.counter {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fffdf9;
+}
+.counter .stat-label {
+  font-size: 0.75rem;
+}
+.counter strong {
+  font-size: 1.15rem;
+}
+.lifeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--border);
+  margin-left: 14px;
+}
+.gene {
+  position: relative;
+  padding: 0 0 14px 22px;
+}
+.gene-icon {
+  position: absolute;
+  left: -14px;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--navy);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+.gene-birth .gene-icon {
+  background: var(--success-soft);
+  border-color: var(--success);
+}
+.gene-death .gene-icon {
+  background: var(--maroon);
+  border-color: var(--maroon);
+  color: #fff;
+}
+.gene-alive .gene-icon {
+  border-color: var(--success);
+  color: var(--success);
+}
+.gene-birth .gene-body,
+.gene-death .gene-body {
+  background: var(--grey-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.gene-death .gene-body {
+  background: var(--maroon-soft);
+}
+.gene-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.gene-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.gene-meta .neg {
+  color: var(--danger);
+  font-weight: 600;
+}
+.gene-meta .pos {
+  color: var(--success);
+  font-weight: 600;
+}
+.gene-why {
+  margin-top: 4px;
+  color: var(--text);
+}
+.journey {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  align-items: center;
+}
+.journey-stop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.journey-transit {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.journey-box {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--navy-soft);
+  min-width: 140px;
+}
+.journey-dwell {
+  font-weight: 700;
+  color: var(--navy);
+}
+.genealogy .edge {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+.genealogy .edge-label {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.genealogy .node rect {
+  fill: #fff;
+  stroke: var(--navy);
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+.genealogy .node-self rect {
+  fill: var(--navy-soft);
+  stroke-width: 2.5;
+}
+.genealogy .node:focus rect {
+  stroke: var(--maroon);
+}
+.genealogy .node-title {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text);
+}
+.genealogy .node-sub {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.integrity-ok {
+  color: var(--success);
+  font-weight: 700;
+}
+.integrity-bad {
+  color: var(--danger);
+  font-weight: 700;
+}
+.lot-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+}
+.lot-qr {
+  background: #fff;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.label-sheet {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  border: 1px dashed var(--muted);
+  padding: 12px;
+  background: #fff;
+  width: max-content;
+}
+.label-sheet.label-small {
+  font-size: 11px;
+  gap: 8px;
+  padding: 6px;
+}
+@media print {
+  .no-print,
+  .sidebar,
+  .topbar {
+    display: none !important;
+  }
+  .label-sheet {
+    border: none;
+  }
+}
+@media (max-width: 720px) {
+  .lot-head {
+    grid-template-columns: 1fr;
+  }
+}

@@ -31,6 +31,10 @@ const CycleCounts = lazy(() => import('./pages/CycleCounts'));
 const Reports = lazy(() => import('./pages/Reports'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const Users = lazy(() => import('./pages/Users'));
+const StockDna = lazy(() => import('./pages/StockDna'));
+const LotDetail = lazy(() => import('./pages/LotDetail'));
+const LotLabel = lazy(() => import('./pages/LotLabel'));
+const RecallTrace = lazy(() => import('./pages/RecallTrace'));
 
 const guard = (roles: typeof ALL, el: JSX.Element) => <ProtectedRoute roles={roles}>{el}</ProtectedRoute>;
 
@@ -56,6 +60,10 @@ export default function App() {
             <Route path="warehouses" element={guard(INTERNAL, <Warehouses />)} />
             <Route path="stock" element={guard(INTERNAL, <Stock />)} />
             <Route path="scan" element={guard(INTERNAL, <Scan />)} />
+            <Route path="dna" element={guard(ALL, <StockDna />)} />
+            <Route path="dna/recall-trace" element={guard(MANAGERS, <RecallTrace />)} />
+            <Route path="dna/:id" element={guard(ALL, <LotDetail />)} />
+            <Route path="dna/:id/label" element={guard(ALL, <LotLabel />)} />
             <Route path="suppliers" element={guard(['admin', 'warehouse_manager', 'supplier'], <Suppliers />)} />
             <Route path="purchase-orders" element={guard(ALL, <PurchaseOrders />)} />
             <Route path="transfers" element={guard(INTERNAL, <Transfers />)} />
