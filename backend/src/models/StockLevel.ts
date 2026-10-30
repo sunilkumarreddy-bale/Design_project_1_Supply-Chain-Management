@@ -10,12 +10,15 @@ const StockLevelSchema = new Schema(
     expiryDate: { type: Date, default: null },
     quantity: { type: Number, min: [0, 'Stock quantity cannot be negative'], default: 0 },
     reorderPoint: { type: Number, min: 0, default: 0 },
+    /** The Stock DNA lot this slice belongs to (set by the stock service). */
+    lot: { type: Schema.Types.ObjectId, ref: 'StockLot', default: null },
   },
   { timestamps: true, toJSON: jsonOptions },
 );
 StockLevelSchema.index({ product: 1, warehouse: 1, batchNo: 1, bin: 1 }, { unique: true });
 StockLevelSchema.index({ expiryDate: 1 });
 StockLevelSchema.index({ warehouse: 1 });
+StockLevelSchema.index({ lot: 1 });
 
 export type IStockLevel = InferSchemaType<typeof StockLevelSchema>;
 export const StockLevel = model('StockLevel', StockLevelSchema);

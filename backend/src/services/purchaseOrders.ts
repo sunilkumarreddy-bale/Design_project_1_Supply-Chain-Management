@@ -1,6 +1,5 @@
 /** Purchase-order lifecycle, auto-draft (F2 + F4) and receipt with supplier lead-time learning (F3). */
 import { Discrepancy, PurchaseOrder, Supplier, Warehouse } from '../models';
-import { withTransaction } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { idStr, snapshot } from '../utils/ids';
 import { addDays, DAY_MS } from '../utils/dates';
@@ -25,7 +24,9 @@ import {
 import { nextPoNumber } from './counters';
 import { raiseAlert, resolveAlerts, evaluateStockAlerts } from './alerts';
 import { notifyContact, notifySafe } from './notifications';
-import { addToLine, afterStockChange, requireActiveProduct, requireActiveWarehouse, resolveBin } from './inventory';
+import { afterStockChange, requireActiveProduct, requireActiveWarehouse } from './inventory';
+import { receiveLot, runStock } from './stockService';
+import { nextSequence } from '../models/Counter';
 import { updateRecoveryProgress } from './planProgress';
 
 type PODoc = InstanceType<typeof PurchaseOrder>;
@@ -385,8 +386,11 @@ export async function receivePO(id: string, input: { receivedItems: ReceiveItemI
   const before = snapshot(pre);
   const now = new Date();
 
-  const out = await withTransaction(async (session) => {
+  const { result: out } = await runStock(user, async (ctx) => {
+    const session = ctx.session;
+    const dnaLots: { product: string; lot: string; dnaCode: string; quantity: number; created: boolean }[] = [];
     const po = await PurchaseOrder.findById(id).session(session);
+    const grnNo = `GRN-${new Date().getUTCFullYear()}-${String(await nextSequence('grn', session)).padStart(6, '0')}`;
     if (!po) throw ApiError.notFound('Purchase order not found');
     const wh = await requireActiveWarehouse(po.warehouse, session);
     const shortLines: { product: string; outstanding: number; received: number }[] = [];
@@ -403,17 +407,22 @@ export async function receivePO(id: string, input: { receivedItems: ReceiveItemI
       }
       const product = await requireActiveProduct(r.product, session);
       if (product.isPerishable && !r.expiryDate) throw ApiError.badRequest(`${product.sku} is perishable: an expiry date is required`);
-      await addToLine(
-        {
-          product: product._id,
-          warehouse: wh._id,
-          bin: resolveBin(wh, r.bin),
-          batchNo: (r.batchNo ?? '').trim() || po.poNumber,
-          expiryDate: r.expiryDate ?? null,
-          quantity: r.quantityReceived,
-        },
-        session,
-      );
+      const received = await receiveLot(ctx, {
+        product: product._id,
+        warehouse: wh._id,
+        bin: r.bin,
+        batchNo: (r.batchNo ?? '').trim() || po.poNumber,
+        expiryDate: r.expiryDate ?? null,
+        quantity: r.quantityReceived,
+        unitCost: item.unitCost ?? null,
+        supplier: po.supplier,
+        birthType: 'purchase_receipt',
+        refType: 'purchase_order',
+        refId: po._id,
+        grnNo,
+        explanation: `Received ${r.quantityReceived} of ${product.sku} against ${po.poNumber} (${grnNo}) at ${wh.code}`,
+      });
+      dnaLots.push({ product: product._id.toHexString(), lot: received.lot._id.toHexString(), dnaCode: received.lot.dnaCode, quantity: r.quantityReceived, created: received.created });
       item.quantityReceived += r.quantityReceived;
       if (r.quantityReceived < outstanding) shortLines.push({ product: r.product, outstanding, received: r.quantityReceived });
     }
@@ -467,7 +476,7 @@ export async function receivePO(id: string, input: { receivedItems: ReceiveItemI
         discrepancies.push(d);
       }
     }
-    return { po, shortLines, discrepancies, leadTimeSample };
+    return { po, shortLines, discrepancies, leadTimeSample, dnaLots };
   });
 
   const { po } = out;
@@ -515,7 +524,7 @@ export async function receivePO(id: string, input: { receivedItems: ReceiveItemI
       by: user._id,
     });
   }
-  return { purchaseOrder: po, shortLines: out.shortLines, discrepancies: out.discrepancies, leadTimeSample: out.leadTimeSample };
+  return { purchaseOrder: po, shortLines: out.shortLines, discrepancies: out.discrepancies, leadTimeSample: out.leadTimeSample, dnaLots: out.dnaLots };
 }
 
 export async function cancelPO(id: string, user: AuthUser) {

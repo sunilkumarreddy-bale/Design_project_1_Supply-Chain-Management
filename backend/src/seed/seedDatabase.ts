@@ -7,7 +7,6 @@ import {
   Product,
   ProductDependency,
   PurchaseOrder,
-  StockLevel,
   StockPolicy,
   Supplier,
   SupplierOffer,
@@ -22,6 +21,7 @@ import { nextPoNumber } from '../services/counters';
 import { checkOverduePOs, evaluateStockAlerts, sweepExpiry } from '../services/alerts';
 import { announcePending } from '../services/purchaseOrders';
 import { flushNotifications } from '../services/notifications';
+import { receiveLot, runStock } from '../services/stockService';
 import {
   CUSTOMER_ORDERS,
   DEMAND,
@@ -122,16 +122,21 @@ export async function seedDatabase(opts: { ifEmpty?: boolean; log?: (m: string) 
   await DemandHistory.insertMany(rows);
 
   // stock, policies, routes, offers
+  // opening balances go through the stock service, so every seeded lot is born with its DNA
   for (const s of STOCK) {
-    const line = await StockLevel.create({
-      product: p[s.sku]._id,
-      warehouse: wh[s.wh]._id,
-      bin: s.bin,
-      batchNo: s.batchNo ?? '',
-      expiryDate: s.expiresInDays !== undefined ? new Date(now.getTime() + s.expiresInDays * DAY_MS) : null,
-      quantity: s.qty,
-    });
-    await audit('seed.stock', 'StockLevel', line, wh[s.wh]._id);
+    await runStock(null, (ctx) =>
+      receiveLot(ctx, {
+        product: p[s.sku]._id,
+        warehouse: wh[s.wh]._id,
+        bin: s.bin,
+        batchNo: s.batchNo ?? '',
+        expiryDate: s.expiresInDays !== undefined ? new Date(now.getTime() + s.expiresInDays * DAY_MS) : null,
+        quantity: s.qty,
+        supplier: p[s.sku].primarySupplier,
+        birthType: 'opening_balance',
+        explanation: `Opening balance (seed, illustrative): ${s.qty} at ${s.wh}`,
+      }),
+    );
   }
   for (const x of POLICIES) await StockPolicy.create({ product: p[x.sku]._id, warehouse: wh[x.wh]._id, minStock: x.minStock, maxStock: x.maxStock ?? null });
   for (const r of ROUTES) {
