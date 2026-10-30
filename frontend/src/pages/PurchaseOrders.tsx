@@ -60,6 +60,7 @@ function ReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void 
   const [lines, setLines] = useState(() => outstanding.map((x) => ({ product: x.item.product._id, qty: String(x.left), batchNo: '', expiryDate: '' })));
   const [logDiscrepancy, setLogDiscrepancy] = useState(false);
   const [errors, setErrors] = useState<Record<number, string>>({});
+  const [lots, setLots] = useState<{ lot: string; dnaCode: string; quantity: number; created: boolean }[]>([]);
   const f = useForm({ notes: '' });
   const short = lines.some((l, idx) => Number(l.qty) < outstanding[idx].left);
   const onSubmit = f.submit(async (v) => {
@@ -79,7 +80,7 @@ function ReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void 
       logDiscrepancy: short && logDiscrepancy,
       notes: v.notes || undefined,
     }).unwrap();
-    setTimeout(onClose, 900);
+    setLots(r.dnaLots ?? []);
     return `${po.poNumber} is now ${humanize(r.purchaseOrder.status).toLowerCase()}${r.leadTimeSample ? `; lead time ${r.leadTimeSample.days} day(s) recorded (${r.leadTimeSample.onTime ? 'on time' : 'late'})` : ''}${r.discrepancies.length ? `; ${r.discrepancies.length} discrepancy logged` : ''}`;
   }, { keepValues: true });
   return (
@@ -136,8 +137,23 @@ function ReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void 
           <input id="rcv-notes" {...f.bind('notes')} />
         </FormField>
         <FormStatus error={f.serverError} success={f.success} />
+        {lots.length > 0 && (
+          <div className="banner banner-info" role="status">
+            <div className="banner-body">
+              Stock DNA:{' '}
+              {lots.map((l) => (
+                <span key={l.lot}>
+                  <Link to={`/dna/${l.lot}`} className="mono">
+                    {l.dnaCode}
+                  </Link>{' '}
+                  ({l.created ? 'born' : 'added'} × {l.quantity}){' '}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={f.saving}>
+          <button type="submit" className="btn btn-primary" disabled={f.saving || lots.length > 0}>
             {f.saving ? 'Saving...' : 'Receive'}
           </button>
           <button type="button" className="btn" onClick={onClose}>

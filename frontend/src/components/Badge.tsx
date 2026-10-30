@@ -44,6 +44,14 @@ const TONES: Record<string, Tone> = {
   fallback: 'default',
   default: 'default',
   no_demand: 'default',
+  quarantine: 'warning',
+  depleted: 'default',
+  expired_disposed: 'danger',
+  written_off: 'danger',
+  recalled_destroyed: 'danger',
+  returned_to_supplier: 'default',
+  recalled: 'danger',
+  pending: 'warning',
 };
 
 export function toneFor(status: string | null | undefined): Tone {

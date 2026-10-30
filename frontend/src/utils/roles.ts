@@ -24,6 +24,7 @@ export const NAV: NavItem[] = [
   { to: '/products', label: 'Products', icon: '◫', roles: INTERNAL },
   { to: '/warehouses', label: 'Warehouses', icon: '⌂', roles: INTERNAL },
   { to: '/stock', label: 'Stock', icon: '▤', roles: INTERNAL },
+  { to: '/dna', label: 'Stock DNA', icon: '⧖', roles: ALL },
   { to: '/scan', label: 'Scan', icon: '⌗', roles: INTERNAL },
   { to: '/suppliers', label: 'Suppliers', icon: '⚑', roles: ['admin', 'warehouse_manager', 'supplier'] },
   { to: '/purchase-orders', label: 'Purchase Orders', icon: '✎', roles: ALL },

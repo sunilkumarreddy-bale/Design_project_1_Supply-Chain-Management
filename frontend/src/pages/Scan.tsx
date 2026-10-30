@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useLookupLotMutation } from '../api/dna';
 import { errorMessage } from '../api/client';
 import { useDispatchStockMutation, useExplainQuery, useReceiveStockMutation, useScanProductMutation } from '../api/inventory';
 import Badge from '../components/Badge';
@@ -30,6 +32,9 @@ function ExplainModal({ product, warehouse, onClose }: { product: Product; wareh
 export default function Scan() {
   const { ownWarehouse } = useAuth();
   const [scan, scanState] = useScanProductMutation();
+  const [lookupLot, lookupState] = useLookupLotMutation();
+  const navigate = useNavigate();
+  const [lotBatch, setLotBatch] = useState('');
   const [dispatchStock] = useDispatchStockMutation();
   const [receive] = useReceiveStockMutation();
   const [sku, setSku] = useState('');
@@ -47,6 +52,16 @@ export default function Scan() {
       return;
     }
     setScanError('');
+    if (/^DNA-/i.test(text)) {
+      // a Stock DNA label: open the lot's life summary and actions
+      try {
+        const lot = await lookupLot({ code: text }).unwrap();
+        navigate(`/dna/${lot._id}`);
+      } catch (e) {
+        setScanError(errorMessage(e));
+      }
+      return;
+    }
     try {
       setResult(await scan(text).unwrap());
       setSku(text);
@@ -104,9 +119,9 @@ export default function Scan() {
             <label htmlFor="scan-sku" className="sr-only">
               SKU
             </label>
-            <input id="scan-sku" className="grow" placeholder="Type SKU, e.g. SKU-BAT-004" value={sku} onChange={(e) => setSku(e.target.value)} style={{ width: 'auto' }} />
+            <input id="scan-sku" className="grow" placeholder="SKU (SKU-BAT-004) or DNA code (DNA-...)" value={sku} onChange={(e) => setSku(e.target.value)} style={{ width: 'auto' }} />
             <button type="submit" className="btn btn-primary" disabled={scanState.isLoading}>
-              {scanState.isLoading ? 'Resolving...' : 'Resolve'}
+              {scanState.isLoading || lookupState.isLoading ? 'Resolving...' : 'Resolve'}
             </button>
           </form>
           {scanError && (
@@ -164,8 +179,30 @@ export default function Scan() {
                   { key: 'bin', header: 'Bin', render: (l) => l.bin || '—' },
                   { key: 'exp', header: 'Expiry', render: (l) => <ExpiryBadge expiry={l.expiryDate} /> },
                   { key: 'qty', header: 'Qty', align: 'right', render: (l) => number(l.quantity, 0) },
+                  { key: 'dna', header: 'DNA', render: (l) => (l.lot ? <Link to={`/dna/${l.lot}`}>Open lot</Link> : '—') },
                 ]}
               />
+              <form
+                className="row gap mt"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setScanError('');
+                  try {
+                    const lot = await lookupLot({ sku: result.product.sku, batchNo: lotBatch.trim() }).unwrap();
+                    navigate(`/dna/${lot._id}`);
+                  } catch (err) {
+                    setScanError(errorMessage(err));
+                  }
+                }}
+              >
+                <label htmlFor="scan-lot-batch" className="sr-only">
+                  Batch number
+                </label>
+                <input id="scan-lot-batch" className="grow" placeholder="Batch number (blank = unbatched)" value={lotBatch} onChange={(e) => setLotBatch(e.target.value)} style={{ width: 'auto' }} />
+                <button type="submit" className="btn" disabled={lookupState.isLoading}>
+                  Open lot DNA
+                </button>
+              </form>
               <form onSubmit={onAct} noValidate className="mt">
                 <h3>Act on this product</h3>
                 <div className="form-grid">

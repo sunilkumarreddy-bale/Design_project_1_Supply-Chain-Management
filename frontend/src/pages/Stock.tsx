@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { downloadFile, errorMessage } from '../api/client';
 import { useDispatchStockMutation, useReceiveStockMutation, useStockQuery, useTransferStockMutation, useWarehousesQuery } from '../api/inventory';
 import { useAppDispatch, useAppSelector } from '../app/store';
@@ -325,6 +325,18 @@ export default function Stock() {
             { key: 'exp', header: 'Expiry', render: (l) => <ExpiryBadge expiry={l.expiryDate} />, sortValue: (l) => l.expiryDate ?? '9999' },
             { key: 'qty', header: 'Qty', align: 'right', render: (l) => number(l.quantity, 0), sortValue: (l) => l.quantity },
             { key: 'rop', header: 'Reorder point', align: 'right', render: (l) => number(l.reorderPoint, 0), sortValue: (l) => l.reorderPoint },
+            {
+              key: 'dna',
+              header: 'DNA',
+              render: (l) =>
+                l.lot ? (
+                  <Link to={`/dna/${l.lot}`} className="btn btn-sm" aria-label={`Open the DNA of ${l.product.sku} batch ${l.batchNo || 'none'}`}>
+                    DNA
+                  </Link>
+                ) : (
+                  '—'
+                ),
+            },
           ]}
         />
         {q.data && <Pager page={page} limit={q.data.limit} total={q.data.total} onPage={setPage} />}
