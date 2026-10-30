@@ -88,3 +88,20 @@ The "about 50 %" in the completion prompt matches only when Stock DNA counts as 
 6. Phase 6: Stock DNA list, lot detail (eight blocks), recall trace, label page; Scan, Stock, PO receive and Dashboard entry points.
 7. Phase 7: DNA codes and `decision_note` genes in redistribution, recovery and simulator; lot status in FEFO, expiry alerts and waste projection; the six seed scenarios.
 8. Phase 8: k6 numbers measured on DNA endpoints, CI, `docs/DEMO_SCRIPT.md`, `docs/CHANGELOG_100.md`, README update, regenerated progress report.
+
+## 8. Before and after (Phase 8, 2026-10-30)
+
+| Measure | Before (Phase 0, `7b0763d`) | After (branch `finish-100-and-dna`) |
+|---|---|---|
+| Master Part 8 items Done | 13 / 13 | 13 / 13 |
+| AC-DNA items Done | 0 / 12 | 12 / 12 |
+| Combined completion | 52 % | 100 % |
+| Backend tests | 23 suites, 293 passing | 26 suites, 357 passing |
+| Frontend tests | 19 passing | 23 passing |
+| Browser workflow steps | 14 | 21 (adds the DNA milk story, verify, certificate, label, recall trace, dashboard cards) |
+| Direct StockLevel quantity writes outside one service | 1 controller + seed | 0 (static test) |
+| Audit entries in the stock transaction | No | Yes (session-aware `recordAudit`) |
+| Postman requests | 128 | 157, plus `docs/postman/stock-dna.json` (28) |
+| Measured load | 20-VU smoke on dev server only | `docs/LOAD_RESULTS.md`: DNA reads p95 193 ms at 50 VUs; mixed writes p95 828 ms at 30 VUs |
+
+Details of every behaviour change: `docs/CHANGELOG_100.md`.
