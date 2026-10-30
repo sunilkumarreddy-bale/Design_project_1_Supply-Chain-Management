@@ -32,6 +32,8 @@ import {
   LotAllocation,
   LotState,
   LotStatus,
+  OUT_KEYS,
+  OutKey,
   pickBlockReason,
   pickFefoLots,
   sealLot,
@@ -132,8 +134,11 @@ export async function loadLot(id: unknown, session?: ClientSession | null): Prom
 }
 
 function stateOf(lot: LotDoc): LotState {
-  const out = (lot.qtyOutByCause ?? {}) as Record<string, number>;
-  const f = (lot.flags ?? {}) as Record<string, boolean>;
+  // read through the document getters: a nested subdocument is not a plain object
+  const out = lot.qtyOutByCause as unknown as Record<OutKey, number | undefined> | null;
+  const f = lot.flags as unknown as Record<string, boolean | undefined> | null;
+  const qtyOutByCause = emptyOut();
+  for (const k of OUT_KEYS) qtyOutByCause[k] = Number(out?.[k] ?? 0);
   return {
     status: lot.status as LotStatus,
     qtyBorn: lot.qtyBorn ?? 0,
@@ -141,13 +146,13 @@ function stateOf(lot: LotDoc): LotState {
     qtyOnHand: lot.qtyOnHand ?? 0,
     qtyInTransit: lot.qtyInTransit ?? 0,
     qtyReserved: lot.qtyReserved ?? 0,
-    qtyOutByCause: { ...emptyOut(), ...Object.fromEntries(Object.entries(out).filter(([, v]) => typeof v === 'number')) },
+    qtyOutByCause,
     flags: {
-      onHold: !!f.onHold,
-      recalled: !!f.recalled,
-      backfilled: !!f.backfilled,
-      qcRejected: !!f.qcRejected,
-      expiryWarned: !!f.expiryWarned,
+      onHold: !!f?.onHold,
+      recalled: !!f?.recalled,
+      backfilled: !!f?.backfilled,
+      qcRejected: !!f?.qcRejected,
+      expiryWarned: !!f?.expiryWarned,
     },
     eventCount: lot.eventCount ?? 0,
   };
