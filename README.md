@@ -17,6 +17,7 @@ stock, EOQ). Staff scan QR codes with any browser camera. The system **proposes*
 | M5 | Self-Healing Recovery Engine: compare transfers and alternative suppliers, rank feasible plans | `engines/recoveryEngine.ts`, `/recovery` |
 | M6 | Domino Effect Predictor: dependency graph, day-by-day flow, strategy comparison, sensitivity sweep | `engines/simulationEngine.ts`, `/simulator` |
 | M7 | Expiry-aware redistribution: move only what a destination can sell before expiry | `engines/redistributionEngine.ts`, `/redistribution` |
+| DNA | **Stock DNA**: a tamper-evident life record per lot, from birth at receipt to death by sale, expiry, damage, recall or return | `engines/dnaEngine.ts`, `services/stockService.ts`, `/dna` |
 
 Also: ABC-XYZ classification with service-level recommendation, days of cover, scan-to-act, cycle counts and
 reconciliation, discrepancies with evidence upload, supplier portal (confirm and dispatch), in-app / email /
@@ -183,19 +184,55 @@ components at the same warehouse (`componentDemand = finishedDemand × quantityP
 and priority and classed on time / at risk (cover after the order < 1 day) / late. Strategies re-run the flow with
 recovery-engine actions; the sweep covers disruption length {3, 5, 7, 10} × safety-stock multiplier {0.5, 1, 1.5}.
 
+## Stock DNA
+
+The audit log records what users did. Stock DNA records what happened to the goods. Specification:
+[docs/Stock_DNA_Spec.md](docs/Stock_DNA_Spec.md). Behaviour changes: [docs/CHANGELOG_100.md](docs/CHANGELOG_100.md).
+
+* **Lot** (`stocklots`): one received batch of one product.
+  * It gets a code `DNA-<SKU>-<YYMMDD>-<n>` and a birth record: purchase receipt, opening balance or customer return.
+  * Its counters always satisfy `born + added = on hand + in transit + sold + consumed + expired + damaged + shrinkage + recalled + returned + written off`.
+  * Its stock slices are the `StockLevel` rows that carry its id.
+* **Genes** (`dnaevents`): about 20 event types (born, put away, QC hold/release/reject, transfer out/in, reserve,
+  FEFO pick, sale, consume, count adjust, damage, expiry warning, expire, recall flag/clear, return to supplier,
+  write-off, decision note, death).
+  * Each gene is SHA-256 chained per lot. The scope "dna" is hashed in, so a gene can never pass as an audit entry.
+  * Each gene is anchored in the global audit chain inside the same transaction.
+  * `POST /api/dna/lots/:id/verify` checks both and names the first broken event.
+* **One choke point**: only `services/stockService.ts` writes stock quantities; a static test enforces it. Every
+  change validates the life-state transition, then updates slices, header, gene and audit anchor atomically.
+  When the last unit leaves, the lot is sealed with a death gene: cause, lifespan, shelf life used and value lost.
+  Dead lots accept no more genes; a customer return becomes a child lot linked in `dnalinks`.
+* **Blocking**: FEFO, transfers and redistribution skip lots that are expired, quarantined or recalled. A recall
+  blocks dispatch at once.
+* **Screens**:
+  * *Stock DNA* list (filters, CSV, scan label);
+  * lot page (header with QR, life bars, counters, lifeline, journey, slices, genealogy, integrity badge,
+    requests);
+  * recall trace;
+  * printable label.
+  DNA buttons also appear on Stock, Scan, PO receive, Dashboard, Insights, Redistribution, Recovery and
+  Customer Orders (Reserve / Ship).
+* **Jobs and commands**:
+  * daily expiry job (also `POST /api/dna/jobs/expiry`);
+  * `npm run dna:backfill`: gives existing stock a backfilled lot, born from the PO when the batch is a received
+    PO; idempotent;
+  * `npm run seed:dna`: adds the six illustrative scenarios to an existing database;
+  * `POST /api/dna/reconcile`: genes vs header vs slices.
+
 ## API summary
 
 All routes are under `/api`, return JSON, validate bodies with zod and answer errors as
 `{ "error": { "message", "code", "details?" } }`. Every mutating route writes a hash-chained audit entry.
-The full list with example bodies is in `postman/smart-inventory-scm.postman_collection.json` (128 requests;
-regenerate with `node postman/generate.mjs`). Main groups: `auth`, `users`, `warehouses`, `suppliers`,
+The full list with example bodies is in `postman/smart-inventory-scm.postman_collection.json` (157 requests;
+regenerate with `node postman/generate.mjs`, which also writes the Stock DNA collection `docs/postman/stock-dna.json`). Main groups: `auth`, `users`, `warehouses`, `suppliers`,
 `supplier-offers`, `products`, `stock`, `transfers`, `stock-counts`, `discrepancies`, `stock-policies`,
 `transfer-routes`, `purchase-orders`, `alerts`, `dashboard`, `analytics`, `audit`, `recovery`, `redistribution`,
-`customer-orders`, `product-dependencies`, `simulation`, `reports`, `notifications`, `maps`, `config`, `health`.
+`customer-orders`, `product-dependencies`, `simulation`, `reports`, `notifications`, `maps`, `dna`, `config`, `health`.
 
 Socket.io events: `stock:update`, `alert:new|update|resolved`, `po:created|approved|rejected|confirmed|dispatched|received|cancelled|paid`,
 `transfer:update`, `recovery:update`, `redistribution:update`, `simulation:done`, `supplier:update`,
-`count:update`, and `notification:new` to the user's own room.
+`count:update`, `dna:event` (to `all` and `wh:<id>`), `dna:death`, `dna:recall`, and `notification:new` to the user's own room.
 
 ## Testing
 
@@ -203,19 +240,19 @@ Socket.io events: `stock:update`, `alert:new|update|resolved`, `po:created|appro
 |-------|---------|----------------------------|
 | Backend unit (engines, JWT, RBAC, error handler, adapters, validation) | `cd backend && npm run test:unit` | passing |
 | Backend integration (Supertest + in-memory replica set) | `npm run test:integration` | passing |
-| Backend total | `npm test` | **23 suites, 293 tests passing** |
-| Frontend (Vitest + Testing Library: login, protected routing, ExplainPanel, DataTable, form validation) | `cd frontend && npm test` | **19 tests passing** |
-| Browser workflow (Playwright, 14 steps across staff, manager, admin) | `cd frontend && npm run e2e` (stack running, freshly seeded) | passing, 0 console errors, 0 failed API calls |
+| Backend total | `npm test` | **26 suites, 357 tests passing** (including Stock DNA unit, static and integration tests) |
+| Frontend (Vitest + Testing Library: login, protected routing, ExplainPanel, DataTable, form validation, Stock DNA lifeline and bars) | `cd frontend && npm test` | **23 tests passing** |
+| Browser workflow (Playwright, 21 steps across staff, manager, admin, including the DNA milk story and recall trace) | `cd frontend && npm run e2e` (stack running, freshly seeded) | passing, 0 console errors, 0 failed API calls |
 | Lint / types | `npm run lint && npm run typecheck` (both apps) | clean |
 
 Backend coverage (Jest, `npm run test:coverage`), statements / branches / functions / lines:
 
 | Area | Stmts | Branch | Funcs | Lines |
 |------|-------|--------|-------|-------|
-| engines | 98.1% | 85.7% | 100% | 98.9% |
-| services | 91.7% | 69.3% | 90.6% | 95.7% |
-| controllers | 89.8% | 58.9% | 94.1% | 96.1% |
-| middleware | 95.7% | 91.0% | 97.0% | 98.2% |
+| engines | 97.2% | 84.6% | 99.6% | 98.5% |
+| services | 90.8% | 69.1% | 91.8% | 94.0% |
+| controllers | 87.8% | 58.9% | 90.4% | 93.6% |
+| middleware | 96.4% | 91.1% | 100% | 98.2% |
 
 Statement and line coverage are above 80% on engines, services and controllers; **branch coverage on services and
 controllers is below 80%** (mostly error paths and optional filters).
@@ -223,11 +260,12 @@ controllers is below 80%** (mostly error paths and optional filters).
 Integration tests use `mongodb-memory-server` replica sets. In CI the binary is downloaded (MongoDB 7.0.14); in
 an offline environment set `MONGOMS_SYSTEM_BINARY` to a local `mongod`.
 
-**Load test** (`loadtest/api.js`, k6, 50 → 200 VUs, thresholds p95 < 500 ms and errors < 1%): the full profile has
-**not** been run against a production-like deployment. A 30-second smoke run with 20 VUs against the dev-mode
-Docker stack in this sandbox (`tsx watch`, 4 vCPU) gave 732 requests, 0% failures, median 10 ms, but p95 1.03 s,
-crossing the threshold; the tail comes from the initial burst of simultaneous bcrypt logins. Run it against the
-compiled production build before drawing conclusions.
+**Load tests** (k6, `loadtest/api.js` and `loadtest/dna.js`). Measured on a 4-vCPU sandbox against the compiled API;
+full details are in [docs/LOAD_RESULTS.md](docs/LOAD_RESULTS.md).
+* Main and Stock DNA reads at 50 VUs: p95 193 ms, 0% errors, 212 req/s.
+* Mixed reads and stock writes at 30 VUs: p95 828 ms, 0% errors. This **misses** the 500 ms target; the tail comes
+  from bcrypt logins at start-up and from the per-process write queue.
+* The full 50 → 200 VU profile has not been run.
 
 ## Status: implemented and tested vs needs credentials or deployment
 
@@ -237,9 +275,10 @@ compiled production build before drawing conclusions.
 | Engines F1–F6, M5, M6, M7 including spec Examples A and B | Implemented and tested |
 | Every page and control in section 5.3, live Socket.io updates, role navigation, /forbidden, 404 | Implemented; component tests + Playwright workflow + page smoke across 4 roles |
 | Seed and scripted scenarios | Implemented and tested (integration test + run against a real replica set) |
+| Stock DNA (data layer, API, screens, six seeded scenarios, backfill, expiry job, recall trace, certificate) | Implemented and tested (unit, static, integration, component, browser) |
 | `docker compose up` (replica set init, seed if empty, API, Vite) | Verified in this sandbox with images from a registry mirror; dependency install inside containers was replaced by host `node_modules` because the sandbox blocks registry access from containers |
 | Production Dockerfiles (`backend/Dockerfile`, `frontend/Dockerfile`) | Written; **not built here** (needs registry access during `npm ci`) |
-| GitHub Actions CI | Written; **not yet run on GitHub** (this session cannot push to the repository) |
+| GitHub Actions CI | Runs on GitHub; green on `main` |
 | Email via SendGrid / SMTP, SMS via Twilio / HTTP gateway | Real drivers implemented and unit-tested with mocked HTTP; **need credentials** (`SENDGRID_API_KEY` or `SMTP_*`, `TWILIO_*` or `SMS_GATEWAY_*`). Console drivers are used without keys |
 | Cloudinary (images, attachments), S3 (documents) | Real drivers implemented, selection tested; **need `CLOUDINARY_URL` / `AWS_S3_BUCKET`**; without them files go to `backend/uploads` and are served at `/uploads` |
 | Google Maps (geocoding, distance, web map) | Real driver implemented and tested with mocked HTTP; **needs `GOOGLE_MAPS_API_KEY` / `VITE_GOOGLE_MAPS_KEY`**; deterministic mock geocoder and a schematic map otherwise |
@@ -312,9 +351,13 @@ asset caching) and set environment variables `VITE_API_URL=https://api.example.c
   warehouse reorder every product.
 * **Rebalance** uses each warehouse's own reorder point (the engine still accepts a single shared ROP, as in the
   61-unit example).
-* **Audit writes** happen right after the business transaction commits and are serialised per process; a crash
-  between the two could lose an entry, and several API instances writing at the same instant could interleave
-  `prevHash` reads. Running one writer instance (or a queue) avoids that.
+* **Audit writes** run inside a transaction that increments the single `Counter("audit")` document. Stock changes
+  write their Stock DNA anchors inside the stock transaction itself. MongoDB therefore serialises writers, even
+  across several API instances, so `prevHash` links stay correct.
+  * Within one process, these writes are also queued (`serialWrite`) to avoid write-conflict retry storms.
+  * The cost is that stock writes run one at a time per process (see docs/LOAD_RESULTS.md).
+  * Other entries (for example `po.create`) are still written right after their own transaction commits, so a
+    crash between the two can lose that entry.
 * **Auto-draft** is not locked across concurrent requests; two simultaneous runs for the same warehouse could both
   draft. A second run after the first completes is a no-op (tested).
 * **Simulation** treats assembly as instantaneous at the warehouse that holds the components; orders are evaluated
@@ -347,3 +390,22 @@ asset caching) and set environment variables `VITE_API_URL=https://api.example.c
 | 11 | Email, SMS, Cloudinary, Maps on mock drivers; real drivers with keys | Passed for mocks; real drivers verified only against mocked HTTP | `integrations.test.ts`, `alerts.test.ts` notifications |
 | 12 | `npm test` passes in backend and frontend; CI green; ≥80% coverage on core modules | Tests pass; **CI not yet run on GitHub**; statement/line coverage ≥ 80%, branch coverage below 80% for services and controllers | Numbers above |
 | 13 | README separates verified from needs-credentials | Done | This file |
+
+## Stock DNA acceptance checklist (Part C.14)
+
+| # | Item | Result | Evidence |
+|---|------|--------|----------|
+| AC-DNA-1 | Every lot has a unique DNA code and a born gene | Passed | `dna.test.ts` (PO receipt), unique index |
+| AC-DNA-2 | No quantity change without a matching gene | Passed | `dnaStockWrites.test.ts`; `/dna/reconcile` returns no drift after every DNA test and after the seed |
+| AC-DNA-3 | A lot dies exactly once and then rejects genes | Passed | `dna.test.ts` life-to-death; engine transition tests |
+| AC-DNA-4 | Verify detects edited, deleted or reordered genes | Passed | `dnaEngine.test.ts`; `dna.test.ts` tamper test |
+| AC-DNA-5 | Every gene is anchored in the audit chain | Passed | Anchor check in the tests; the seed test verifies every lot |
+| AC-DNA-6 | FEFO never draws from expired, quarantined or recalled lots | Passed | Engine FEFO test; expiry, recall and return tests |
+| AC-DNA-7 | Recall trace shows warehouses, orders and the quantity still alive | Passed | `dna.test.ts`, `seed.test.ts`, e2e |
+| AC-DNA-8 | Lot page: birth to death, links, QR, life bars, integrity badge | Passed | `StockDna.test.tsx`, e2e screenshot of the milk lot |
+| AC-DNA-9 | PDF certificate for alive and dead lots | Passed | Integration test (alive lot), e2e download (dead milk lot) |
+| AC-DNA-10 | Suppliers see only their own lots and no customer references | Passed | `dna.test.ts` roles test |
+| AC-DNA-11 | Seed creates the six scenarios; the milk lot shows its full story | Passed | `seed.test.ts`, e2e |
+| AC-DNA-12 | No old Product DNA code in parallel | Passed | None existed (docs/GAP_REPORT.md) |
+
+Demo for the final review: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
