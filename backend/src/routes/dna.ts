@@ -29,12 +29,37 @@ r.post('/lots/:id/reject', managers, validate({ ...idParam, body: c.reasonSchema
 r.post('/lots/:id/recall', admin, validate({ ...idParam, body: c.reasonSchema }), h(c.recall));
 r.post('/lots/:id/recall/clear', admin, validate({ ...idParam, body: c.reasonSchema }), h(c.clearRecall));
 r.post('/lots/:id/dispose', managers, validate({ ...idParam, body: c.disposeSchema }), h(c.dispose));
-r.post('/lots/:id/return-to-supplier', managers, validate({ ...idParam, body: c.returnSchema }), h(c.returnToSupplier));
-r.post('/lots/:id/requests/:requestId/approve', admin, validate({ params: c.requestParams, body: c.decideSchema }), h(c.approveRequest));
-r.post('/lots/:id/requests/:requestId/reject', admin, validate({ params: c.requestParams, body: c.decideSchema }), h(c.rejectRequest));
+r.post(
+  '/lots/:id/return-to-supplier',
+  managers,
+  validate({ ...idParam, body: c.returnSchema }),
+  h(c.returnToSupplier),
+);
+r.post(
+  '/lots/:id/requests/:requestId/approve',
+  admin,
+  validate({ params: c.requestParams, body: c.decideSchema }),
+  h(c.approveRequest),
+);
+r.post(
+  '/lots/:id/requests/:requestId/reject',
+  admin,
+  validate({ params: c.requestParams, body: c.decideSchema }),
+  h(c.rejectRequest),
+);
 r.post('/lots/:id/damage', managers, validate({ ...idParam, body: c.damageSchema }), h(c.damage));
 r.post('/lots/:id/consume', managers, validate({ ...idParam, body: c.consumeSchema }), h(c.consume));
-r.post('/lots/:id/put-away', requireRole(...INTERNAL_ROLES), validate({ ...idParam, body: c.putAwaySchema }), h(c.putAway));
-r.post('/lots/:id/accept-return', managers, validate({ ...idParam, body: c.acceptReturnSchema }), h(c.acceptReturn));
+r.post(
+  '/lots/:id/put-away',
+  requireRole(...INTERNAL_ROLES),
+  validate({ ...idParam, body: c.putAwaySchema }),
+  h(c.putAway),
+);
+r.post(
+  '/lots/:id/accept-return',
+  managers,
+  validate({ ...idParam, body: c.acceptReturnSchema }),
+  h(c.acceptReturn),
+);
 
 export default r;

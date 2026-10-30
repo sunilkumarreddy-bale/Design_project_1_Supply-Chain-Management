@@ -144,6 +144,8 @@ const folders = {
     ['POST', '/customer-orders', { customerName: 'Alpha Retail', warehouse: id('warehouseId'), requiredBy: '2026-11-05', priority: 'high', items: [{ product: id('productId'), quantity: 20 }] }],
     ['PATCH', `/customer-orders/${id('orderId')}`, { status: 'cancelled' }],
     ['DELETE', `/customer-orders/${id('orderId')}`],
+    ['POST', `/customer-orders/${id('orderId')}/reserve`],
+    ['POST', `/customer-orders/${id('orderId')}/ship`, { lines: [{ product: id('productId'), quantity: 5 }] }],
     ['GET', '/product-dependencies'],
     ['POST', '/product-dependencies', { componentProduct: id('productId'), finishedProduct: id('finishedProductId'), quantityPer: 1 }],
     ['DELETE', `/product-dependencies/${id('dependencyId')}`],
@@ -163,6 +165,35 @@ const folders = {
     ['GET', '/reports/stock.pdf'],
     ['GET', '/reports/purchase-orders.pdf'],
     ['GET', `/reports/supplier-scorecard.pdf?supplier=${id('supplierId')}`],
+  ],
+  'Stock DNA': [
+    ['GET', '/dna/lots?alive=true&expiringInDays=7'],
+    ['GET', '/dna/lots?recalled=true'],
+    ['GET', '/dna/lookup?code=DNA-SKU-MLK-020-261023-0001', undefined, 'Lookup by DNA code'],
+    ['GET', '/dna/lookup?sku=SKU-BOX-003&batchNo=BOX-RC-01', undefined, 'Lookup by SKU and batch'],
+    ['GET', '/dna/stats'],
+    ['GET', `/dna/lots/${id('lotId')}`],
+    ['GET', `/dna/lots/${id('lotId')}/timeline`],
+    ['GET', `/dna/lots/${id('lotId')}/genealogy`],
+    ['GET', `/dna/lots/${id('lotId')}/journey`],
+    ['GET', `/dna/lots/${id('lotId')}/certificate.pdf`],
+    ['POST', `/dna/lots/${id('lotId')}/verify`],
+    ['POST', `/dna/lots/${id('lotId')}/hold`, { reason: 'Awaiting lab result' }],
+    ['POST', `/dna/lots/${id('lotId')}/release`, { reason: 'Lab result passed' }],
+    ['POST', `/dna/lots/${id('lotId')}/reject`, { reason: 'Seal broken on inspection' }],
+    ['POST', `/dna/lots/${id('lotId')}/recall`, { reason: 'Supplier recall notice' }],
+    ['POST', `/dna/lots/${id('lotId')}/recall/clear`, { reason: 'Recall withdrawn by supplier' }],
+    ['POST', `/dna/lots/${id('lotId')}/dispose`, { warehouse: id('warehouseId'), quantity: 10, cause: 'damaged', reason: 'Crushed pallet', evidence: [] }],
+    ['POST', `/dna/lots/${id('lotId')}/return-to-supplier`, { warehouse: id('warehouseId'), quantity: 10, reason: 'Wrong specification' }],
+    ['POST', `/dna/lots/${id('lotId')}/requests/${id('requestId')}/approve`, { note: 'Approved' }],
+    ['POST', `/dna/lots/${id('lotId')}/requests/${id('requestId')}/reject`, { note: 'Use markdown instead' }],
+    ['POST', `/dna/lots/${id('lotId')}/damage`, { warehouse: id('warehouseId'), quantity: 2, reason: 'Dropped during picking' }],
+    ['POST', `/dna/lots/${id('lotId')}/consume`, { warehouse: id('warehouseId'), quantity: 5, reason: 'Used for kitting' }],
+    ['POST', `/dna/lots/${id('lotId')}/put-away`, { warehouse: id('warehouseId'), fromBin: 'A1', toBin: 'A2', quantity: 5 }],
+    ['POST', `/dna/lots/${id('lotId')}/accept-return`, { warehouse: id('warehouseId'), quantity: 2, reason: 'Customer return', customerOrder: id('orderId') }],
+    ['GET', `/dna/recall-trace?batchNo=BOX-RC-01`],
+    ['POST', '/dna/reconcile'],
+    ['POST', '/dna/jobs/expiry'],
   ],
   'Notifications & maps': [
     ['GET', '/notifications'],
@@ -199,7 +230,7 @@ const item = ([method, path, body, name]) => {
   return out;
 };
 
-const vars = ['warehouseId', 'otherWarehouseId', 'supplierId', 'productId', 'finishedProductId', 'userId', 'offerId', 'transferId', 'countId', 'countLineId', 'discrepancyId', 'poId', 'alertId', 'recoveryPlanId', 'stockLevelId', 'redistributionPlanId', 'orderId', 'dependencyId', 'runId', 'notificationId'];
+const vars = ['warehouseId', 'otherWarehouseId', 'supplierId', 'productId', 'finishedProductId', 'userId', 'offerId', 'transferId', 'countId', 'countLineId', 'discrepancyId', 'poId', 'alertId', 'recoveryPlanId', 'stockLevelId', 'redistributionPlanId', 'orderId', 'dependencyId', 'runId', 'notificationId', 'lotId', 'requestId'];
 const collection = {
   info: { name: 'Smart Inventory SCM API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json', description: 'All endpoints under /api. Run "Login" first; it stores the JWT in {{token}}.' },
   auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{token}}', type: 'string' }] },
@@ -207,4 +238,12 @@ const collection = {
   item: Object.entries(folders).map(([name, reqs]) => ({ name, item: reqs.map(item) })),
 };
 fs.writeFileSync(new URL('./smart-inventory-scm.postman_collection.json', import.meta.url), JSON.stringify(collection, null, 2) + '\n');
+// the Stock DNA routes also as their own collection (docs/postman/stock-dna.json)
+const dna = {
+  ...collection,
+  info: { ...collection.info, name: 'Smart Inventory SCM - Stock DNA', description: 'Every /api/dna route plus order reserve/ship. Run "Login" first; set lotId from GET /dna/lots.' },
+  item: [{ name: 'Auth', item: [item(folders.Auth[0])] }, { name: 'Stock DNA', item: folders['Stock DNA'].map(item) }],
+};
+fs.mkdirSync(new URL('../docs/postman/', import.meta.url), { recursive: true });
+fs.writeFileSync(new URL('../docs/postman/stock-dna.json', import.meta.url), JSON.stringify(dna, null, 2) + '\n');
 console.log(`Wrote ${Object.values(folders).flat().length} requests`);

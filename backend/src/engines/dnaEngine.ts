@@ -23,7 +23,13 @@ export const LOT_STATUSES = [
 export type LotStatus = (typeof LOT_STATUSES)[number];
 
 export const ALIVE_STATUSES: LotStatus[] = ['quarantine', 'active', 'expired'];
-export const DEAD_STATUSES: LotStatus[] = ['depleted', 'expired_disposed', 'written_off', 'recalled_destroyed', 'returned_to_supplier'];
+export const DEAD_STATUSES: LotStatus[] = [
+  'depleted',
+  'expired_disposed',
+  'written_off',
+  'recalled_destroyed',
+  'returned_to_supplier',
+];
 
 export const GENE_TYPES = [
   'born',
@@ -71,7 +77,16 @@ export type DeathCause = (typeof DEATH_CAUSES)[number];
 export const DISPOSAL_CAUSES = ['expired', 'damaged', 'recalled', 'rejected_at_qc', 'written_off'] as const;
 export type DisposalCause = (typeof DISPOSAL_CAUSES)[number];
 
-export const OUT_KEYS = ['sold', 'consumed', 'expired', 'damaged', 'shrinkage', 'recalled', 'returnedToSupplier', 'writtenOff'] as const;
+export const OUT_KEYS = [
+  'sold',
+  'consumed',
+  'expired',
+  'damaged',
+  'shrinkage',
+  'recalled',
+  'returnedToSupplier',
+  'writtenOff',
+] as const;
 export type OutKey = (typeof OUT_KEYS)[number];
 export type OutByCause = Record<OutKey, number>;
 
@@ -111,7 +126,16 @@ export interface LotState {
 }
 
 export function emptyOut(): OutByCause {
-  return { sold: 0, consumed: 0, expired: 0, damaged: 0, shrinkage: 0, recalled: 0, returnedToSupplier: 0, writtenOff: 0 };
+  return {
+    sold: 0,
+    consumed: 0,
+    expired: 0,
+    damaged: 0,
+    shrinkage: 0,
+    recalled: 0,
+    returnedToSupplier: 0,
+    writtenOff: 0,
+  };
 }
 
 /** State of a lot before its birth gene. */
@@ -142,7 +166,9 @@ export function sumOut(out: OutByCause): number {
 }
 
 /** qtyBorn + qtyAdded = qtyOnHand + qtyInTransit + sum(qtyOutByCause). */
-export function invariantHolds(s: Pick<LotState, 'qtyBorn' | 'qtyAdded' | 'qtyOnHand' | 'qtyInTransit' | 'qtyOutByCause'>): boolean {
+export function invariantHolds(
+  s: Pick<LotState, 'qtyBorn' | 'qtyAdded' | 'qtyOnHand' | 'qtyInTransit' | 'qtyOutByCause'>,
+): boolean {
   return s.qtyBorn + s.qtyAdded === s.qtyOnHand + s.qtyInTransit + sumOut(s.qtyOutByCause);
 }
 
@@ -316,7 +342,8 @@ export const GENE_CATALOGUE: Record<GeneType, CatalogueRow> = {
     needsQty: true,
     apply: (s, g) => {
       const q = positive(g);
-      if (q > s.qtyInTransit) throw new DnaRuleError(`Cannot receive ${q}: only ${s.qtyInTransit} in transit`);
+      if (q > s.qtyInTransit)
+        throw new DnaRuleError(`Cannot receive ${q}: only ${s.qtyInTransit} in transit`);
       s.qtyInTransit -= q;
       s.qtyOnHand += q;
       return { qtyDelta: 0, qtyMoved: q };
@@ -381,7 +408,8 @@ export const GENE_CATALOGUE: Record<GeneType, CatalogueRow> = {
     needsQty: true,
     apply: (s, g) => {
       const d = g.qty ?? 0;
-      if (!Number.isFinite(d) || d === 0 || !Number.isInteger(d)) throw new DnaRuleError('count_adjust needs a non-zero whole variance');
+      if (!Number.isFinite(d) || d === 0 || !Number.isInteger(d))
+        throw new DnaRuleError('count_adjust needs a non-zero whole variance');
       if (d < 0) {
         takeOnHand(s, -d, 'count down');
         s.qtyOutByCause.shrinkage += -d;
@@ -456,9 +484,12 @@ export const GENE_CATALOGUE: Record<GeneType, CatalogueRow> = {
       if (!cause || !DISPOSAL_CAUSES.includes(cause)) {
         throw new DnaRuleError(`write_off needs a cause: ${DISPOSAL_CAUSES.join(', ')}`);
       }
-      if (cause === 'expired' && s.status !== 'expired') throw new DnaRuleError('Only an expired lot can be disposed as expired');
-      if (cause === 'recalled' && !s.flags.recalled) throw new DnaRuleError('Only a recalled lot can be disposed as recalled');
-      if (cause === 'rejected_at_qc' && !s.flags.qcRejected) throw new DnaRuleError('Only a lot rejected at QC can be disposed as rejected');
+      if (cause === 'expired' && s.status !== 'expired')
+        throw new DnaRuleError('Only an expired lot can be disposed as expired');
+      if (cause === 'recalled' && !s.flags.recalled)
+        throw new DnaRuleError('Only a recalled lot can be disposed as recalled');
+      if (cause === 'rejected_at_qc' && !s.flags.qcRejected)
+        throw new DnaRuleError('Only a lot rejected at QC can be disposed as rejected');
       takeOnHand(s, q, 'write off');
       s.qtyOutByCause[DISPOSAL_OUT_KEY[cause]] += q;
       return { qtyDelta: -q, qtyMoved: q };
@@ -487,7 +518,8 @@ export function applyGene(state: LotState, gene: GeneInput): GeneEffect {
   const row = GENE_CATALOGUE[gene.type];
   if (!row) throw new DnaRuleError(`Unknown gene type ${gene.type}`);
   if (isDead(state.status)) throw new DnaRuleError(`The lot is dead (${state.status}); its DNA is sealed`);
-  if (gene.type !== 'born' && state.eventCount === 0) throw new DnaRuleError('The first gene of a lot must be born');
+  if (gene.type !== 'born' && state.eventCount === 0)
+    throw new DnaRuleError('The first gene of a lot must be born');
   const next = cloneState(state);
   const { qtyDelta, qtyMoved } = row.apply(next, gene);
   next.eventCount = state.eventCount + 1;
@@ -653,7 +685,10 @@ export function verifyLotChain(
     const g = genes[i];
     const expectedSeq = i + 1;
     if (g.seq !== expectedSeq) {
-      broken = { seq: expectedSeq, reason: `Sequence gap: expected event #${expectedSeq} but found #${g.seq} (an event was deleted or reordered)` };
+      broken = {
+        seq: expectedSeq,
+        reason: `Sequence gap: expected event #${expectedSeq} but found #${g.seq} (an event was deleted or reordered)`,
+      };
       break;
     }
     if (deathSeen) {
@@ -661,7 +696,10 @@ export function verifyLotChain(
       break;
     }
     if (g.prevHash !== prevHash) {
-      broken = { seq: g.seq, reason: `prevHash does not match the hash of event #${g.seq - 1} (the chain was altered)` };
+      broken = {
+        seq: g.seq,
+        reason: `prevHash does not match the hash of event #${g.seq - 1} (the chain was altered)`,
+      };
       break;
     }
     if (geneHash(prevHash, hashFieldsOf(g)) !== g.hash) {
@@ -686,14 +724,19 @@ export function verifyLotChain(
     for (const g of genes) {
       const a = anchors.get(g.seq);
       if (!a) anchorProblems.push({ seq: g.seq, reason: 'No audit anchor found' });
-      else if (a !== g.hash) anchorProblems.push({ seq: g.seq, reason: 'Hash differs from the one anchored in the audit log' });
+      else if (a !== g.hash)
+        anchorProblems.push({ seq: g.seq, reason: 'Hash differs from the one anchored in the audit log' });
     }
   }
   return {
     ok: !broken && anchorProblems.length === 0,
     eventsChecked: checked,
     firstBrokenSeq: broken?.seq ?? null,
-    reason: broken?.reason ?? (anchorProblems.length ? `Anchor check failed at event #${anchorProblems[0].seq}: ${anchorProblems[0].reason}` : null),
+    reason:
+      broken?.reason ??
+      (anchorProblems.length
+        ? `Anchor check failed at event #${anchorProblems[0].seq}: ${anchorProblems[0].reason}`
+        : null),
     anchoredOk: anchors ? anchorProblems.length === 0 : false,
     anchorProblems,
   };
@@ -832,9 +875,11 @@ export function analyseLocations(genes: MoveGene[], until: Date): LocationAnalys
     }
   }
   if (lastT !== null && until.getTime() > lastT) unitDays += (total() * (until.getTime() - lastT)) / DAY_MS;
-  for (const stop of open.values()) stop.dwellDays = round2((until.getTime() - stop.arrivedAt.getTime()) / DAY_MS);
+  for (const stop of open.values())
+    stop.dwellDays = round2((until.getTime() - stop.arrivedAt.getTime()) / DAY_MS);
   const dwellByLocation: Record<string, number> = {};
-  for (const s of journey) dwellByLocation[s.warehouse] = round2((dwellByLocation[s.warehouse] ?? 0) + s.dwellDays);
+  for (const s of journey)
+    dwellByLocation[s.warehouse] = round2((dwellByLocation[s.warehouse] ?? 0) + s.dwellDays);
   return { journey, dwellByLocation, hops, unitDays: round2(unitDays) };
 }
 
@@ -930,11 +975,17 @@ export interface ForwardTrace {
 }
 
 /** Forward trace: every warehouse that received the lots, every order they shipped to, and every child lot. */
-export function traceForward(rootIds: string[], lots: Map<string, TraceLot>, genes: TraceGene[], links: TraceLink[]): ForwardTrace {
+export function traceForward(
+  rootIds: string[],
+  lots: Map<string, TraceLot>,
+  genes: TraceGene[],
+  links: TraceLink[],
+): ForwardTrace {
   const byLot = new Map<string, TraceGene[]>();
   for (const g of genes) byLot.set(String(g.lot), [...(byLot.get(String(g.lot)) ?? []), g]);
   const childrenOf = new Map<string, string[]>();
-  for (const l of links) childrenOf.set(String(l.parentLot), [...(childrenOf.get(String(l.parentLot)) ?? []), String(l.childLot)]);
+  for (const l of links)
+    childrenOf.set(String(l.parentLot), [...(childrenOf.get(String(l.parentLot)) ?? []), String(l.childLot)]);
 
   const out: ForwardTraceLot[] = [];
   const seen = new Set<string>();
@@ -949,12 +1000,15 @@ export function traceForward(rootIds: string[], lots: Map<string, TraceLot>, gen
     const orders = new Map<string, number>();
     let dispatched = 0;
     for (const g of byLot.get(id) ?? []) {
-      if ((g.type === 'born' || g.type === 'receive_more') && g.warehouse) wh.set(String(g.warehouse), (wh.get(String(g.warehouse)) ?? 0) + Number(g.qtyDelta ?? 0));
-      if (g.type === 'transfer_in' && g.toWarehouse) wh.set(String(g.toWarehouse), (wh.get(String(g.toWarehouse)) ?? 0) + Number(g.qtyMoved ?? 0));
+      if ((g.type === 'born' || g.type === 'receive_more') && g.warehouse)
+        wh.set(String(g.warehouse), (wh.get(String(g.warehouse)) ?? 0) + Number(g.qtyDelta ?? 0));
+      if (g.type === 'transfer_in' && g.toWarehouse)
+        wh.set(String(g.toWarehouse), (wh.get(String(g.toWarehouse)) ?? 0) + Number(g.qtyMoved ?? 0));
       if (g.type === 'dispatch_sale') {
         const q = Number(g.qtyMoved ?? 0);
         dispatched += q;
-        if (g.refType === 'customer_order' && g.refId) orders.set(String(g.refId), (orders.get(String(g.refId)) ?? 0) + q);
+        if (g.refType === 'customer_order' && g.refId)
+          orders.set(String(g.refId), (orders.get(String(g.refId)) ?? 0) + q);
       }
     }
     const children = childrenOf.get(id) ?? [];
@@ -987,7 +1041,10 @@ export function traceForward(rootIds: string[], lots: Map<string, TraceLot>, gen
 }
 
 /** Backward trace: the chain of parent lots up to the original births (nearest first). */
-export function traceBackward(lotId: string, links: TraceLink[]): { lot: string; parent: string; relation: string; qty: number; depth: number }[] {
+export function traceBackward(
+  lotId: string,
+  links: TraceLink[],
+): { lot: string; parent: string; relation: string; qty: number; depth: number }[] {
   const parentsOf = new Map<string, TraceLink[]>();
   for (const l of links) parentsOf.set(String(l.childLot), [...(parentsOf.get(String(l.childLot)) ?? []), l]);
   const out: { lot: string; parent: string; relation: string; qty: number; depth: number }[] = [];
@@ -1035,7 +1092,10 @@ export function reconcileLots(rows: ReconcileInput[]): ReconcileDrift[] {
   const out: ReconcileDrift[] = [];
   for (const r of rows) {
     const inv = invariantHolds(r.header);
-    const same = r.geneOnHand === r.header.qtyOnHand && r.header.qtyOnHand === r.sliceOnHand && r.geneInTransit === r.header.qtyInTransit;
+    const same =
+      r.geneOnHand === r.header.qtyOnHand &&
+      r.header.qtyOnHand === r.sliceOnHand &&
+      r.geneInTransit === r.header.qtyInTransit;
     if (!same || !inv) {
       out.push({
         lot: r.lot,
@@ -1053,7 +1113,10 @@ export function reconcileLots(rows: ReconcileInput[]): ReconcileDrift[] {
 }
 
 /** Replays qtyAfter from stored genes: the last gene's recorded totals. */
-export function geneTotals(genes: { seq: number; qtyAfter?: { onHand?: number; inTransit?: number } }[]): { onHand: number; inTransit: number } {
+export function geneTotals(genes: { seq: number; qtyAfter?: { onHand?: number; inTransit?: number } }[]): {
+  onHand: number;
+  inTransit: number;
+} {
   if (!genes.length) return { onHand: 0, inTransit: 0 };
   const last = genes.reduce((a, b) => (b.seq > a.seq ? b : a));
   return { onHand: Number(last.qtyAfter?.onHand ?? 0), inTransit: Number(last.qtyAfter?.inTransit ?? 0) };
@@ -1075,7 +1138,10 @@ export interface PickableSlice {
 }
 
 /** Why a slice cannot be picked, or null when it can. */
-export function pickBlockReason(s: Pick<PickableSlice, 'lotStatus' | 'recalled' | 'expiryDate'>, now: Date): string | null {
+export function pickBlockReason(
+  s: Pick<PickableSlice, 'lotStatus' | 'recalled' | 'expiryDate'>,
+  now: Date,
+): string | null {
   if (s.recalled) return 'recalled';
   if (s.lotStatus === 'expired') return 'expired';
   if (s.lotStatus === 'quarantine') return 'in quarantine';
@@ -1103,7 +1169,14 @@ export function pickFefoLots(slices: PickableSlice[], qty: number, now: Date): L
   const lotOf = new Map(pickable.map((s) => [s.id, s.lot]));
   try {
     return allocateFEFO(
-      pickable.map((s) => ({ id: s.id, batchNo: s.batchNo, bin: s.bin, expiryDate: s.expiryDate, quantity: s.quantity, createdAt: s.createdAt ?? null })),
+      pickable.map((s) => ({
+        id: s.id,
+        batchNo: s.batchNo,
+        bin: s.bin,
+        expiryDate: s.expiryDate,
+        quantity: s.quantity,
+        createdAt: s.createdAt ?? null,
+      })),
       qty,
     ).map((a) => ({ ...a, lineId: a.lineId!, lot: lotOf.get(a.lineId!)! }));
   } catch (e) {

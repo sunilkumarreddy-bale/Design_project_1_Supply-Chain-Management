@@ -29,15 +29,40 @@ export const listLotsQuery = z.object({
   q: z.string().trim().max(80).optional(),
 });
 export const lookupQuery = z
-  .object({ code: z.string().trim().max(80).optional(), sku: z.string().trim().max(80).optional(), batchNo: z.string().trim().max(60).optional() })
+  .object({
+    code: z.string().trim().max(80).optional(),
+    sku: z.string().trim().max(80).optional(),
+    batchNo: z.string().trim().max(60).optional(),
+  })
   .refine((v) => v.code || v.sku, { message: 'give a DNA code, or a SKU with a batch number' });
-export const recallTraceQuery = z.object({ supplier: objectId.optional(), product: objectId.optional(), batchNo: z.string().trim().max(60).optional() });
+export const recallTraceQuery = z.object({
+  supplier: objectId.optional(),
+  product: objectId.optional(),
+  batchNo: z.string().trim().max(60).optional(),
+});
 export const reasonSchema = z.object({ reason });
-export const disposeSchema = z.object({ warehouse: objectId, quantity: positiveQty, cause: z.enum(DISPOSAL_CAUSES), reason, evidence });
+export const disposeSchema = z.object({
+  warehouse: objectId,
+  quantity: positiveQty,
+  cause: z.enum(DISPOSAL_CAUSES),
+  reason,
+  evidence,
+});
 export const returnSchema = z.object({ warehouse: objectId, quantity: positiveQty, reason });
-export const damageSchema = z.object({ warehouse: objectId, quantity: positiveQty, reason, bin: z.string().trim().max(60).optional().nullable(), evidence });
+export const damageSchema = z.object({
+  warehouse: objectId,
+  quantity: positiveQty,
+  reason,
+  bin: z.string().trim().max(60).optional().nullable(),
+  evidence,
+});
 export const consumeSchema = z.object({ warehouse: objectId, quantity: positiveQty, reason });
-export const putAwaySchema = z.object({ warehouse: objectId, fromBin: z.string().trim().max(60).default(''), toBin: z.string().trim().min(1).max(60), quantity: positiveQty });
+export const putAwaySchema = z.object({
+  warehouse: objectId,
+  fromBin: z.string().trim().max(60).default(''),
+  toBin: z.string().trim().min(1).max(60),
+  quantity: positiveQty,
+});
 export const acceptReturnSchema = z.object({
   warehouse: objectId,
   quantity: positiveQty,
@@ -56,11 +81,15 @@ async function lotFor(req: Request) {
 
 /** Managers and staff may only act on lots that have been in their own warehouse. */
 function assertLotScope(req: Request, lot: { warehouses?: unknown[] }) {
-  if (!dna.canWriteLot(currentUser(req), lot)) throw ApiError.forbidden('You can only act on lots in your own warehouse');
+  if (!dna.canWriteLot(currentUser(req), lot))
+    throw ApiError.forbidden('You can only act on lots in your own warehouse');
 }
 
 async function respond(res: Response, lotId: unknown, genes: stock.GeneRecord[], status = 200) {
-  const lot = await StockLot.findById(idStr(lotId)).select('-requests').populate('product', 'sku name').lean();
+  const lot = await StockLot.findById(idStr(lotId))
+    .select('-requests')
+    .populate('product', 'sku name')
+    .lean();
   res.status(status).json({ lot, gene: genes[genes.length - 1] ?? null, genes });
 }
 
@@ -70,17 +99,28 @@ export async function listLots(req: Request, res: Response) {
   res.json(await dna.listLots({ ...q, page, limit }, currentUser(req)));
 }
 
-export const getLot = async (req: Request, res: Response) => res.json(await dna.getLot(req.params.id, currentUser(req)));
-export const timeline = async (req: Request, res: Response) => res.json(await dna.timeline(req.params.id, currentUser(req)));
-export const genealogy = async (req: Request, res: Response) => res.json(await dna.genealogy(req.params.id, currentUser(req)));
-export const journey = async (req: Request, res: Response) => res.json(await dna.journey(req.params.id, currentUser(req)));
-export const lookup = async (req: Request, res: Response) => res.json(await dna.lookup(req.query as z.infer<typeof lookupQuery>, currentUser(req)));
+export const getLot = async (req: Request, res: Response) =>
+  res.json(await dna.getLot(req.params.id, currentUser(req)));
+export const timeline = async (req: Request, res: Response) =>
+  res.json(await dna.timeline(req.params.id, currentUser(req)));
+export const genealogy = async (req: Request, res: Response) =>
+  res.json(await dna.genealogy(req.params.id, currentUser(req)));
+export const journey = async (req: Request, res: Response) =>
+  res.json(await dna.journey(req.params.id, currentUser(req)));
+export const lookup = async (req: Request, res: Response) =>
+  res.json(await dna.lookup(req.query as z.infer<typeof lookupQuery>, currentUser(req)));
 export const stats = async (req: Request, res: Response) => res.json(await dna.stats(currentUser(req)));
 
 export async function verify(req: Request, res: Response) {
   const user = currentUser(req);
   const r = await dna.verifyLot(req.params.id, user);
-  await recordAudit({ action: 'dna.verify', entityType: 'StockLot', entityId: req.params.id, actor: user, after: { ok: r.ok, firstBrokenSeq: r.firstBrokenSeq, eventsChecked: r.eventsChecked } });
+  await recordAudit({
+    action: 'dna.verify',
+    entityType: 'StockLot',
+    entityId: req.params.id,
+    actor: user,
+    after: { ok: r.ok, firstBrokenSeq: r.firstBrokenSeq, eventsChecked: r.eventsChecked },
+  });
   res.json(r);
 }
 
@@ -90,12 +130,22 @@ export async function recallTrace(req: Request, res: Response) {
 
 export async function certificate(req: Request, res: Response) {
   const lot = await dna.readableLot(req.params.id, currentUser(req));
-  sendFile(res, await dna.certificatePdf(req.params.id, currentUser(req)), `${lot.dnaCode}-certificate.pdf`, 'application/pdf');
+  sendFile(
+    res,
+    await dna.certificatePdf(req.params.id, currentUser(req)),
+    `${lot.dnaCode}-certificate.pdf`,
+    'application/pdf',
+  );
 }
 
 export async function reconcile(req: Request, res: Response) {
   const r = await dna.reconcileAll();
-  await recordAudit({ action: 'dna.reconcile', entityType: 'StockLot', actor: currentUser(req), after: { lotsChecked: r.lotsChecked, drift: r.drift.length, orphanSlices: r.orphanSlices } });
+  await recordAudit({
+    action: 'dna.reconcile',
+    entityType: 'StockLot',
+    actor: currentUser(req),
+    after: { lotsChecked: r.lotsChecked, drift: r.drift.length, orphanSlices: r.orphanSlices },
+  });
   res.json(r);
 }
 
@@ -106,12 +156,17 @@ export async function runExpiryJob(req: Request, res: Response) {
 }
 
 /** hold / release / reject / recall / recall-clear: one flag gene each. */
-function flagAction(fn: (ctx: stock.StockCtx, id: unknown, reason: string) => Promise<{ gene: stock.GeneRecord }>, scoped: boolean) {
+function flagAction(
+  fn: (ctx: stock.StockCtx, id: unknown, reason: string) => Promise<{ gene: stock.GeneRecord }>,
+  scoped: boolean,
+) {
   return async (req: Request, res: Response) => {
     const user = currentUser(req);
     const lot = await lotFor(req);
     if (scoped) assertLotScope(req, lot);
-    const { genes } = await stock.runStock(user, (ctx) => fn(ctx, lot._id, (req.body as { reason: string }).reason));
+    const { genes } = await stock.runStock(user, (ctx) =>
+      fn(ctx, lot._id, (req.body as { reason: string }).reason),
+    );
     await respond(res, lot._id, genes);
   };
 }
@@ -135,7 +190,14 @@ export async function reject(req: Request, res: Response) {
       { $group: { _id: '$warehouse', qty: { $sum: '$quantity' } } },
     ]).session(ctx.session);
     for (const h of held) {
-      fresh.requests.push({ kind: 'dispose', cause: 'rejected_at_qc', warehouse: h._id, qty: h.qty, reason: `Rejected at QC: ${why}`, requestedBy: user._id } as never);
+      fresh.requests.push({
+        kind: 'dispose',
+        cause: 'rejected_at_qc',
+        warehouse: h._id,
+        qty: h.qty,
+        reason: `Rejected at QC: ${why}`,
+        requestedBy: user._id,
+      } as never);
     }
     await fresh.save({ session: ctx.session });
     return r;
@@ -147,7 +209,12 @@ export async function reject(req: Request, res: Response) {
 async function notifyRequest(dnaCode: string, lotId: unknown, kind: string, body: string) {
   await notifySafe(
     { roles: ['admin'] },
-    { type: 'dna.request', subject: `${kind === 'dispose' ? 'Disposal' : 'Return to supplier'} awaiting approval: ${dnaCode}`, body, link: `/dna/${idStr(lotId)}` },
+    {
+      type: 'dna.request',
+      subject: `${kind === 'dispose' ? 'Disposal' : 'Return to supplier'} awaiting approval: ${dnaCode}`,
+      body,
+      link: `/dna/${idStr(lotId)}`,
+    },
   );
 }
 
@@ -167,21 +234,55 @@ function requestOrExecute(kind: 'dispose' | 'return_to_supplier') {
         user,
         (ctx) =>
           kind === 'dispose'
-            ? stock.disposeLot(ctx, lot._id, { warehouse: b.warehouse, quantity: b.quantity, cause: b.cause, reason: b.reason, evidence: b.evidence })
-            : stock.returnToSupplier(ctx, lot._id, { warehouse: b.warehouse, quantity: b.quantity, reason: b.reason }),
+            ? stock.disposeLot(ctx, lot._id, {
+                warehouse: b.warehouse,
+                quantity: b.quantity,
+                cause: b.cause,
+                reason: b.reason,
+                evidence: b.evidence,
+              })
+            : stock.returnToSupplier(ctx, lot._id, {
+                warehouse: b.warehouse,
+                quantity: b.quantity,
+                reason: b.reason,
+              }),
         user._id,
       );
       await afterStockChange(lot.product, [b.warehouse], { action: kind, quantity: b.quantity });
       return respond(res, lot._id, genes);
     }
-    if (['depleted', 'expired_disposed', 'written_off', 'recalled_destroyed', 'returned_to_supplier'].includes(lot.status)) {
+    if (
+      ['depleted', 'expired_disposed', 'written_off', 'recalled_destroyed', 'returned_to_supplier'].includes(
+        lot.status,
+      )
+    ) {
       throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
     }
-    lot.requests.push({ kind, cause: kind === 'dispose' ? b.cause : null, warehouse: b.warehouse, qty: b.quantity, reason: b.reason, evidence: b.evidence ?? [], requestedBy: user._id } as never);
+    lot.requests.push({
+      kind,
+      cause: kind === 'dispose' ? b.cause : null,
+      warehouse: b.warehouse,
+      qty: b.quantity,
+      reason: b.reason,
+      evidence: b.evidence ?? [],
+      requestedBy: user._id,
+    } as never);
     await lot.save();
     const r = lot.requests[lot.requests.length - 1];
-    await recordAudit({ action: `dna.request.${kind}`, entityType: 'StockLot', entityId: lot._id, actor: user, warehouse: b.warehouse, after: r });
-    await notifyRequest(lot.dnaCode, lot._id, kind, `${user.name} asks to ${kind === 'dispose' ? `dispose ${b.quantity} (${b.cause})` : `return ${b.quantity} to the supplier`}: ${b.reason}`);
+    await recordAudit({
+      action: `dna.request.${kind}`,
+      entityType: 'StockLot',
+      entityId: lot._id,
+      actor: user,
+      warehouse: b.warehouse,
+      after: r,
+    });
+    await notifyRequest(
+      lot.dnaCode,
+      lot._id,
+      kind,
+      `${user.name} asks to ${kind === 'dispose' ? `dispose ${b.quantity} (${b.cause})` : `return ${b.quantity} to the supplier`}: ${b.reason}`,
+    );
     res.status(202).json({ lot: await StockLot.findById(lot._id).lean(), request: r, pending: true });
   };
 }
@@ -201,11 +302,28 @@ export async function approveRequest(req: Request, res: Response) {
     async (ctx) => {
       const gene =
         r.kind === 'dispose'
-          ? await stock.disposeLot(ctx, lot._id, { warehouse: r.warehouse, quantity: r.qty, cause: r.cause as never, reason: `${r.reason} (approved by ${user.name})`, evidence: r.evidence })
-          : await stock.returnToSupplier(ctx, lot._id, { warehouse: r.warehouse, quantity: r.qty, reason: `${r.reason} (approved by ${user.name})` });
+          ? await stock.disposeLot(ctx, lot._id, {
+              warehouse: r.warehouse,
+              quantity: r.qty,
+              cause: r.cause as never,
+              reason: `${r.reason} (approved by ${user.name})`,
+              evidence: r.evidence,
+            })
+          : await stock.returnToSupplier(ctx, lot._id, {
+              warehouse: r.warehouse,
+              quantity: r.qty,
+              reason: `${r.reason} (approved by ${user.name})`,
+            });
       await StockLot.updateOne(
         { _id: lot._id, 'requests._id': r._id, 'requests.status': 'pending' },
-        { $set: { 'requests.$.status': 'approved', 'requests.$.decidedBy': user._id, 'requests.$.decidedAt': new Date(), 'requests.$.decisionNote': note } },
+        {
+          $set: {
+            'requests.$.status': 'approved',
+            'requests.$.decidedBy': user._id,
+            'requests.$.decidedAt': new Date(),
+            'requests.$.decisionNote': note,
+          },
+        },
         { session: ctx.session },
       );
       return gene;
@@ -213,7 +331,15 @@ export async function approveRequest(req: Request, res: Response) {
     user._id,
   );
   await afterStockChange(lot.product, [r.warehouse], { action: r.kind, quantity: r.qty });
-  await notifySafe({ userIds: [r.requestedBy] }, { type: 'dna.request_decided', subject: `Request approved: ${lot.dnaCode}`, body: `${user.name} approved your ${r.kind.replace(/_/g, ' ')} request`, link: `/dna/${lot._id}` });
+  await notifySafe(
+    { userIds: [r.requestedBy] },
+    {
+      type: 'dna.request_decided',
+      subject: `Request approved: ${lot.dnaCode}`,
+      body: `${user.name} approved your ${r.kind.replace(/_/g, ' ')} request`,
+      link: `/dna/${lot._id}`,
+    },
+  );
   await respond(res, lot._id, genes);
 }
 
@@ -228,8 +354,23 @@ export async function rejectRequest(req: Request, res: Response) {
   r.decidedAt = new Date();
   r.decisionNote = (req.body as { note?: string }).note ?? '';
   await lot.save();
-  await recordAudit({ action: 'dna.request.reject', entityType: 'StockLot', entityId: lot._id, actor: user, warehouse: r.warehouse, after: r });
-  await notifySafe({ userIds: [r.requestedBy] }, { type: 'dna.request_decided', subject: `Request rejected: ${lot.dnaCode}`, body: `${user.name} rejected your ${r.kind.replace(/_/g, ' ')} request. ${r.decisionNote}`, link: `/dna/${lot._id}` });
+  await recordAudit({
+    action: 'dna.request.reject',
+    entityType: 'StockLot',
+    entityId: lot._id,
+    actor: user,
+    warehouse: r.warehouse,
+    after: r,
+  });
+  await notifySafe(
+    { userIds: [r.requestedBy] },
+    {
+      type: 'dna.request_decided',
+      subject: `Request rejected: ${lot.dnaCode}`,
+      body: `${user.name} rejected your ${r.kind.replace(/_/g, ' ')} request. ${r.decisionNote}`,
+      link: `/dna/${lot._id}`,
+    },
+  );
   res.json({ lot: await StockLot.findById(lot._id).lean(), request: r });
 }
 
@@ -269,9 +410,19 @@ export async function acceptReturn(req: Request, res: Response) {
   const b = req.body as z.infer<typeof acceptReturnSchema>;
   assertWarehouseScope(user, b.warehouse);
   const { result, genes } = await stock.runStock(user, (ctx) =>
-    stock.acceptReturn(ctx, lot._id, { warehouse: b.warehouse, quantity: b.quantity, bin: b.bin, reason: b.reason, refType: b.customerOrder ? 'customer_order' : null, refId: b.customerOrder }),
+    stock.acceptReturn(ctx, lot._id, {
+      warehouse: b.warehouse,
+      quantity: b.quantity,
+      bin: b.bin,
+      reason: b.reason,
+      refType: b.customerOrder ? 'customer_order' : null,
+      refId: b.customerOrder,
+    }),
   );
   await afterStockChange(lot.product, [b.warehouse], { action: 'return_in', quantity: b.quantity });
-  const child = await StockLot.findById(result.child._id).select('-requests').populate('product', 'sku name').lean();
+  const child = await StockLot.findById(result.child._id)
+    .select('-requests')
+    .populate('product', 'sku name')
+    .lean();
   res.status(201).json({ lot: child, parent: lot._id, gene: genes[genes.length - 1] ?? null, genes });
 }
