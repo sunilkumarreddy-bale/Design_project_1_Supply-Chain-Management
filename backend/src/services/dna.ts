@@ -4,7 +4,16 @@
  * reconcile and the PDF life certificate. All writes go through services/stockService.
  */
 import { Types } from 'mongoose';
-import { AuditLog, CustomerOrder, DnaEvent, DnaLink, Product, StockLevel, StockLot, Warehouse } from '../models';
+import {
+  AuditLog,
+  CustomerOrder,
+  DnaEvent,
+  DnaLink,
+  Product,
+  StockLevel,
+  StockLot,
+  Warehouse,
+} from '../models';
 import { ApiError } from '../utils/apiError';
 import { idStr } from '../utils/ids';
 import type { AuthUser } from '../middleware/auth';
@@ -29,12 +38,14 @@ import { notifySafe } from './notifications';
 
 const DAY_MS = 86_400_000;
 const d10 = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString().slice(0, 10) : '-');
-const dt = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') : '-');
+const dt = (d: Date | string | null | undefined) =>
+  d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') : '-';
 
 /** Suppliers only ever see their own lots; managers and staff see lots that have been in their warehouse. */
 export function lotScope(user: AuthUser): Record<string, unknown> {
   if (user.role === 'supplier') return { supplier: user.supplier ? new Types.ObjectId(user.supplier) : null };
-  if ((user.role === 'warehouse_manager' || user.role === 'staff') && user.warehouse) return { warehouses: new Types.ObjectId(user.warehouse) };
+  if ((user.role === 'warehouse_manager' || user.role === 'staff') && user.warehouse)
+    return { warehouses: new Types.ObjectId(user.warehouse) };
   return {};
 }
 
@@ -50,7 +61,8 @@ export async function readableLot(id: string, user: AuthUser) {
     .populate('requests.decidedBy', 'name')
     .lean();
   if (!lot) throw ApiError.notFound('Lot not found');
-  if (user.role === 'supplier' && idStr(lot.supplier) !== user.supplier) throw ApiError.notFound('Lot not found');
+  if (user.role === 'supplier' && idStr(lot.supplier) !== user.supplier)
+    throw ApiError.notFound('Lot not found');
   return lot;
 }
 
@@ -99,10 +111,18 @@ async function currentLocations(lotIds: Types.ObjectId[]) {
     { $group: { _id: { lot: '$lot', warehouse: '$warehouse' }, qty: { $sum: '$quantity' } } },
     { $lookup: { from: 'warehouses', localField: '_id.warehouse', foreignField: '_id', as: 'w' } },
     { $unwind: '$w' },
-    { $project: { _id: 0, lot: '$_id.lot', warehouse: { _id: '$w._id', code: '$w.code', name: '$w.name' }, qty: 1 } },
+    {
+      $project: {
+        _id: 0,
+        lot: '$_id.lot',
+        warehouse: { _id: '$w._id', code: '$w.code', name: '$w.name' },
+        qty: 1,
+      },
+    },
   ]);
   const m = new Map<string, { warehouse: { _id: unknown; code: string; name: string }; qty: number }[]>();
-  for (const r of rows) m.set(idStr(r.lot)!, [...(m.get(idStr(r.lot)!) ?? []), { warehouse: r.warehouse, qty: r.qty }]);
+  for (const r of rows)
+    m.set(idStr(r.lot)!, [...(m.get(idStr(r.lot)!) ?? []), { warehouse: r.warehouse, qty: r.qty }]);
   return m;
 }
 
@@ -138,32 +158,57 @@ export async function listLots(q: ListLotsQuery, user: AuthUser) {
 /** Customer references are ids only; suppliers do not see them at all. */
 function sanitizeGene<T extends Record<string, any>>(g: T, user: AuthUser): T {
   if (user.role !== 'supplier' || g.refType !== 'customer_order') return g;
-  return { ...g, refId: null, explanation: g.type === 'dispatch_sale' ? `Dispatched ${g.qtyMoved} to a customer` : `${String(g.type).replace(/_/g, ' ')} for a customer order` };
+  return {
+    ...g,
+    refId: null,
+    explanation:
+      g.type === 'dispatch_sale'
+        ? `Dispatched ${g.qtyMoved} to a customer`
+        : `${String(g.type).replace(/_/g, ' ')} for a customer order`,
+  };
 }
 
 export async function lotGenes(lotId: unknown) {
-  return DnaEvent.find({ lot: idStr(lotId) }).sort({ seq: 1 }).lean();
+  return DnaEvent.find({ lot: idStr(lotId) })
+    .sort({ seq: 1 })
+    .lean();
 }
 
 export async function getLot(id: string, user: AuthUser) {
   const lot = await readableLot(id, user);
   const genes = await lotGenes(lot._id);
-  const slices = await StockLevel.find({ lot: lot._id, quantity: { $gt: 0 } }).populate('warehouse', 'code name').sort({ warehouse: 1, bin: 1 }).lean();
+  const slices = await StockLevel.find({ lot: lot._id, quantity: { $gt: 0 } })
+    .populate('warehouse', 'code name')
+    .sort({ warehouse: 1, bin: 1 })
+    .lean();
   const product = lot.product as unknown as { holdingCostPerUnitYear?: number } | null;
   const metrics = lotMetrics(
     {
-      state: { qtyOnHand: lot.qtyOnHand, qtyBorn: lot.qtyBorn, qtyAdded: lot.qtyAdded, status: lot.status as LotStatus },
+      state: {
+        qtyOnHand: lot.qtyOnHand,
+        qtyBorn: lot.qtyBorn,
+        qtyAdded: lot.qtyAdded,
+        status: lot.status as LotStatus,
+      },
       bornAt: lot.birth!.at,
       diedAt: lot.death?.at ?? null,
       manufactureDate: lot.manufactureDate ?? null,
       expiryDate: lot.expiryDate ?? null,
       holdingCostPerUnitYear: product?.holdingCostPerUnitYear ?? 0,
-      genes: genes.map((g) => ({ ...g, warehouse: idStr(g.warehouse), fromWarehouse: idStr(g.fromWarehouse), toWarehouse: idStr(g.toWarehouse), refId: idStr(g.refId) })),
+      genes: genes.map((g) => ({
+        ...g,
+        warehouse: idStr(g.warehouse),
+        fromWarehouse: idStr(g.fromWarehouse),
+        toWarehouse: idStr(g.toWarehouse),
+        refId: idStr(g.refId),
+      })),
     },
     new Date(),
   );
   const whIds = [...new Set(metrics.journey.map((j) => j.warehouse))];
-  const whs = await Warehouse.find({ _id: { $in: whIds } }).select('code name city location').lean();
+  const whs = await Warehouse.find({ _id: { $in: whIds } })
+    .select('code name city location')
+    .lean();
   const whById = new Map(whs.map((w) => [w._id.toHexString(), w]));
   const sliceSum = slices.reduce((s, x) => s + x.quantity, 0);
   return {
@@ -171,8 +216,13 @@ export async function getLot(id: string, user: AuthUser) {
     requests: user.role === 'supplier' ? [] : lot.requests,
     metrics: {
       ...metrics,
-      journey: metrics.journey.map((j) => ({ ...j, warehouse: whById.get(j.warehouse) ?? { _id: j.warehouse, code: '?', name: 'Unknown' } })),
-      dwellByLocation: Object.fromEntries(Object.entries(metrics.dwellByLocation).map(([k, v]) => [whById.get(k)?.code ?? k, v])),
+      journey: metrics.journey.map((j) => ({
+        ...j,
+        warehouse: whById.get(j.warehouse) ?? { _id: j.warehouse, code: '?', name: 'Unknown' },
+      })),
+      dwellByLocation: Object.fromEntries(
+        Object.entries(metrics.dwellByLocation).map(([k, v]) => [whById.get(k)?.code ?? k, v]),
+      ),
     },
     slices,
     invariantOk: invariantHolds(lot as never) && sliceSum === lot.qtyOnHand,
@@ -212,7 +262,13 @@ export async function genealogy(id: string, user: AuthUser) {
         const key = l._id.toHexString();
         if (!seenEdge.has(key)) {
           seenEdge.add(key);
-          edges.push({ parentLot: idStr(l.parentLot)!, childLot: idStr(l.childLot)!, relation: l.relation, qty: l.qty, at: l.at });
+          edges.push({
+            parentLot: idStr(l.parentLot)!,
+            childLot: idStr(l.childLot)!,
+            relation: l.relation,
+            qty: l.qty,
+            at: l.at,
+          });
         }
         const next = idStr(dir === 'up' ? l.parentLot : l.childLot)!;
         if (!seen.has(next)) {
@@ -226,30 +282,58 @@ export async function genealogy(id: string, user: AuthUser) {
   await visit(self, 'up');
   await visit(self, 'down');
   const ids = [...new Set([self, ...edges.flatMap((e) => [e.parentLot, e.childLot])])];
-  const nodes = await StockLot.find({ _id: { $in: ids } }).select('dnaCode batchNo status qtyBorn qtyOnHand birth.type supplier').lean();
+  const nodes = await StockLot.find({ _id: { $in: ids } })
+    .select('dnaCode batchNo status qtyBorn qtyOnHand birth.type supplier')
+    .lean();
   const visible = user.role === 'supplier' ? nodes.filter((n) => idStr(n.supplier) === user.supplier) : nodes;
   const up = traceBackward(self, edges);
   return {
     lot: self,
-    nodes: visible.map((n) => ({ ...n, role: n._id.toHexString() === self ? 'self' : up.some((u) => u.parent === n._id.toHexString()) ? 'ancestor' : 'descendant' })),
-    edges: edges.filter((e) => visible.some((n) => n._id.toHexString() === e.parentLot) && visible.some((n) => n._id.toHexString() === e.childLot)),
+    nodes: visible.map((n) => ({
+      ...n,
+      role:
+        n._id.toHexString() === self
+          ? 'self'
+          : up.some((u) => u.parent === n._id.toHexString())
+            ? 'ancestor'
+            : 'descendant',
+    })),
+    edges: edges.filter(
+      (e) =>
+        visible.some((n) => n._id.toHexString() === e.parentLot) &&
+        visible.some((n) => n._id.toHexString() === e.childLot),
+    ),
   };
 }
 
 export async function journey(id: string, user: AuthUser) {
   const l = await getLot(id, user);
-  return { lot: l._id, dnaCode: l.dnaCode, journey: l.metrics.journey, dwellByLocation: l.metrics.dwellByLocation, hops: l.metrics.hops };
+  return {
+    lot: l._id,
+    dnaCode: l.dnaCode,
+    journey: l.metrics.journey,
+    dwellByLocation: l.metrics.dwellByLocation,
+    hops: l.metrics.hops,
+  };
 }
 
 /** Resolves a scanned DNA code, or a product SKU plus batch number, to a lot. */
 export async function lookup(input: { code?: string; sku?: string; batchNo?: string }, user: AuthUser) {
   let lot = null;
   if (input.code) {
-    lot = await StockLot.findOne({ dnaCode: input.code.trim().toUpperCase(), ...lotScope(user) }).select('_id dnaCode status').lean();
+    lot = await StockLot.findOne({ dnaCode: input.code.trim().toUpperCase(), ...lotScope(user) })
+      .select('_id dnaCode status')
+      .lean();
   } else if (input.sku) {
-    const p = await Product.findOne({ $or: [{ sku: input.sku.trim() }, { qrPayload: input.sku.trim() }] }).select('_id').lean();
+    const p = await Product.findOne({ $or: [{ sku: input.sku.trim() }, { qrPayload: input.sku.trim() }] })
+      .select('_id')
+      .lean();
     if (p) {
-      lot = await StockLot.findOne({ product: p._id, batchNo: (input.batchNo ?? '').trim(), ...lotScope(user) })
+      lot = await StockLot.findOne({
+        product: p._id,
+        batchNo: (input.batchNo ?? '').trim(),
+        ...lotScope(user),
+      })
         .sort({ createdAt: -1 })
         .select('_id dnaCode status')
         .lean();
@@ -263,7 +347,11 @@ export async function lookup(input: { code?: string; sku?: string; batchNo?: str
 export async function verifyLot(id: string, user: AuthUser) {
   const lot = await readableLot(id, user);
   const genes = (await lotGenes(lot._id)) as unknown as StoredGene[];
-  const anchors = await AuditLog.find({ entityType: 'StockLot', entityId: lot._id.toHexString(), action: /^dna\./ })
+  const anchors = await AuditLog.find({
+    entityType: 'StockLot',
+    entityId: lot._id.toHexString(),
+    action: /^dna\./,
+  })
     .select('metadata')
     .lean();
   const map = new Map<number, string>();
@@ -272,13 +360,25 @@ export async function verifyLot(id: string, user: AuthUser) {
     if (m?.seq) map.set(m.seq, m.dnaHash ?? '');
   }
   const header = await StockLot.findById(lot._id).select('eventCount headHash').lean();
-  const r = verifyLotChain(genes, { eventCount: header!.eventCount, headHash: header!.headHash ?? null }, map);
+  const r = verifyLotChain(
+    genes,
+    { eventCount: header!.eventCount, headHash: header!.headHash ?? null },
+    map,
+  );
   const at = new Date();
-  await StockLot.updateOne({ _id: lot._id }, { $set: { lastVerify: { at, ok: r.ok, firstBrokenSeq: r.firstBrokenSeq } } });
+  await StockLot.updateOne(
+    { _id: lot._id },
+    { $set: { lastVerify: { at, ok: r.ok, firstBrokenSeq: r.firstBrokenSeq } } },
+  );
   if (!r.ok) {
     await notifySafe(
       { roles: ['admin'] },
-      { type: 'dna.verify_failed', subject: `DNA verification failed for ${lot.dnaCode}`, body: r.reason ?? 'The chain does not verify', link: `/dna/${lot._id.toHexString()}` },
+      {
+        type: 'dna.verify_failed',
+        subject: `DNA verification failed for ${lot.dnaCode}`,
+        body: r.reason ?? 'The chain does not verify',
+        link: `/dna/${lot._id.toHexString()}`,
+      },
     );
   }
   return { ...r, checkedAt: at, dnaCode: lot.dnaCode };
@@ -286,12 +386,17 @@ export async function verifyLot(id: string, user: AuthUser) {
 
 /** Recall trace: every lot matching supplier/product/batch, traced forward (and back to its birth). */
 export async function recallTrace(input: { supplier?: string; product?: string; batchNo?: string }) {
-  if (!input.supplier && !input.product && !input.batchNo) throw ApiError.badRequest('Give a supplier, a product or a batch number');
+  if (!input.supplier && !input.product && !input.batchNo)
+    throw ApiError.badRequest('Give a supplier, a product or a batch number');
   const f: Record<string, unknown> = {};
   if (input.supplier) f.supplier = new Types.ObjectId(input.supplier);
   if (input.product) f.product = new Types.ObjectId(input.product);
   if (input.batchNo) f.batchNo = input.batchNo.trim();
-  const roots = await StockLot.find(f).populate('product', 'sku name').populate('supplier', 'name').populate('birth.warehouse', 'code name').lean();
+  const roots = await StockLot.find(f)
+    .populate('product', 'sku name')
+    .populate('supplier', 'name')
+    .populate('birth.warehouse', 'code name')
+    .lean();
   // the whole family: descendants of the matching lots
   const family = new Set(roots.map((r) => r._id.toHexString()));
   const links: { parentLot: string; childLot: string; relation: string; qty: number }[] = [];
@@ -300,7 +405,12 @@ export async function recallTrace(input: { supplier?: string; product?: string; 
     const ls = await DnaLink.find({ parentLot: { $in: frontier } }).lean();
     frontier = [];
     for (const l of ls) {
-      links.push({ parentLot: idStr(l.parentLot)!, childLot: idStr(l.childLot)!, relation: l.relation, qty: l.qty });
+      links.push({
+        parentLot: idStr(l.parentLot)!,
+        childLot: idStr(l.childLot)!,
+        relation: l.relation,
+        qty: l.qty,
+      });
       const c = idStr(l.childLot)!;
       if (!family.has(c)) {
         family.add(c);
@@ -312,25 +422,61 @@ export async function recallTrace(input: { supplier?: string; product?: string; 
   const lots = new Map<string, TraceLot>(
     all.map((l) => [
       l._id.toHexString(),
-      { id: l._id.toHexString(), dnaCode: l.dnaCode, status: l.status as LotStatus, qtyBorn: l.qtyBorn, qtyAdded: l.qtyAdded, qtyOnHand: l.qtyOnHand, qtyInTransit: l.qtyInTransit, birthWarehouse: idStr(l.birth?.warehouse) },
+      {
+        id: l._id.toHexString(),
+        dnaCode: l.dnaCode,
+        status: l.status as LotStatus,
+        qtyBorn: l.qtyBorn,
+        qtyAdded: l.qtyAdded,
+        qtyOnHand: l.qtyOnHand,
+        qtyInTransit: l.qtyInTransit,
+        birthWarehouse: idStr(l.birth?.warehouse),
+      },
     ]),
   );
-  const genes = await DnaEvent.find({ lot: { $in: [...family] }, type: { $in: ['born', 'receive_more', 'transfer_in', 'dispatch_sale'] } })
+  const genes = await DnaEvent.find({
+    lot: { $in: [...family] },
+    type: { $in: ['born', 'receive_more', 'transfer_in', 'dispatch_sale'] },
+  })
     .select('lot type warehouse toWarehouse qtyMoved qtyDelta refType refId')
     .lean();
-  const plain = genes.map((g) => ({ ...g, lot: idStr(g.lot)!, warehouse: idStr(g.warehouse), toWarehouse: idStr(g.toWarehouse), refId: idStr(g.refId) }));
+  const plain = genes.map((g) => ({
+    ...g,
+    lot: idStr(g.lot)!,
+    warehouse: idStr(g.warehouse),
+    toWarehouse: idStr(g.toWarehouse),
+    refId: idStr(g.refId),
+  }));
   const whs = await Warehouse.find().select('code name').lean();
   const whName = new Map(whs.map((w) => [w._id.toHexString(), { _id: w._id, code: w.code, name: w.name }]));
   const orderIds = plain.filter((g) => g.refType === 'customer_order' && g.refId).map((g) => g.refId!);
-  const orders = await CustomerOrder.find({ _id: { $in: orderIds } }).select('orderNo warehouse status').lean();
+  const orders = await CustomerOrder.find({ _id: { $in: orderIds } })
+    .select('orderNo warehouse status')
+    .lean();
   const orderNo = new Map(orders.map((o) => [o._id.toHexString(), o.orderNo]));
-  const resolveWh = (w: { warehouse: string; qtyReceived: number }) => ({ ...w, warehouse: whName.get(w.warehouse) ?? { _id: w.warehouse, code: '?', name: 'Unknown' } });
-  const resolveOrder = (o: { refId: string; qty: number }) => ({ ...o, orderNo: orderNo.get(o.refId) ?? null });
+  const resolveWh = (w: { warehouse: string; qtyReceived: number }) => ({
+    ...w,
+    warehouse: whName.get(w.warehouse) ?? { _id: w.warehouse, code: '?', name: 'Unknown' },
+  });
+  const resolveOrder = (o: { refId: string; qty: number }) => ({
+    ...o,
+    orderNo: orderNo.get(o.refId) ?? null,
+  });
 
   const perLot = roots.map((r) => {
     const t = traceForward([r._id.toHexString()], lots, plain, links);
     return {
-      lot: { _id: r._id, dnaCode: r.dnaCode, batchNo: r.batchNo, status: r.status, product: r.product, supplier: r.supplier, flags: r.flags, qtyBorn: r.qtyBorn, qtyOnHand: r.qtyOnHand },
+      lot: {
+        _id: r._id,
+        dnaCode: r.dnaCode,
+        batchNo: r.batchNo,
+        status: r.status,
+        product: r.product,
+        supplier: r.supplier,
+        flags: r.flags,
+        qtyBorn: r.qtyBorn,
+        qtyOnHand: r.qtyOnHand,
+      },
       backward: {
         supplier: r.supplier,
         birthType: r.birth?.type,
@@ -345,11 +491,20 @@ export async function recallTrace(input: { supplier?: string; product?: string; 
         orders: t.orders.map(resolveOrder),
         qtyDispatchedToOrders: t.qtyDispatchedToOrders,
         qtyStillAlive: t.qtyStillAlive,
-        lots: t.lots.map((l) => ({ ...l, warehouses: l.warehouses.map(resolveWh), orders: l.orders.map(resolveOrder) })),
+        lots: t.lots.map((l) => ({
+          ...l,
+          warehouses: l.warehouses.map(resolveWh),
+          orders: l.orders.map(resolveOrder),
+        })),
       },
     };
   });
-  const total = traceForward(roots.map((r) => r._id.toHexString()), lots, plain, links);
+  const total = traceForward(
+    roots.map((r) => r._id.toHexString()),
+    lots,
+    plain,
+    links,
+  );
   return {
     query: input,
     matched: roots.length,
@@ -371,7 +526,15 @@ export async function stats(user: AuthUser, now = new Date()) {
     StockLot.countDocuments({ ...scope, status: { $in: DEAD_STATUSES } }),
     StockLot.aggregate([
       { $match: { ...scope, death: { $ne: null } } },
-      { $group: { _id: '$death.cause', count: { $sum: 1 }, avgLifespanDays: { $avg: '$death.lifespanDays' }, avgLifeUsedPct: { $avg: '$death.lifeUsedPct' }, valueLost: { $sum: '$death.valueLost' } } },
+      {
+        $group: {
+          _id: '$death.cause',
+          count: { $sum: 1 },
+          avgLifespanDays: { $avg: '$death.lifespanDays' },
+          avgLifeUsedPct: { $avg: '$death.lifeUsedPct' },
+          valueLost: { $sum: '$death.valueLost' },
+        },
+      },
       { $sort: { count: -1 } },
     ]),
     StockLot.aggregate([
@@ -379,7 +542,11 @@ export async function stats(user: AuthUser, now = new Date()) {
       { $group: { _id: '$death.cause', count: { $sum: 1 }, valueLost: { $sum: '$death.valueLost' } } },
       { $sort: { count: -1 } },
     ]),
-    StockLot.countDocuments({ ...scope, status: { $in: ['active', 'quarantine'] }, expiryDate: { $ne: null, $gte: now, $lte: new Date(now.getTime() + 7 * DAY_MS) } }),
+    StockLot.countDocuments({
+      ...scope,
+      status: { $in: ['active', 'quarantine'] },
+      expiryDate: { $ne: null, $gte: now, $lte: new Date(now.getTime() + 7 * DAY_MS) },
+    }),
     StockLot.countDocuments({ ...scope, 'flags.recalled': true, status: { $in: ALIVE_STATUSES } }),
     // value lost by cause, including waste on lots that are still alive (unit cost at birth)
     StockLot.aggregate([
@@ -408,11 +575,24 @@ export async function stats(user: AuthUser, now = new Date()) {
   ]);
   // value lost this month to expiry and damage: write-off and damage genes dated this month
   const monthLoss = await DnaEvent.aggregate([
-    { $match: { at: { $gte: monthStart }, $or: [{ type: 'damage' }, { type: 'write_off', cause: { $in: ['expired', 'damaged'] } }] } },
+    {
+      $match: {
+        at: { $gte: monthStart },
+        $or: [{ type: 'damage' }, { type: 'write_off', cause: { $in: ['expired', 'damaged'] } }],
+      },
+    },
     { $lookup: { from: 'stocklots', localField: 'lot', foreignField: '_id', as: 'l' } },
     { $unwind: '$l' },
-    ...(Object.keys(scope).length ? [{ $match: Object.fromEntries(Object.entries(scope).map(([k, v]) => [`l.${k}`, v])) }] : []),
-    { $group: { _id: { $cond: [{ $eq: ['$cause', 'expired'] }, 'expired', 'damaged'] }, value: { $sum: { $multiply: ['$qtyMoved', '$l.birth.unitCost'] } }, units: { $sum: '$qtyMoved' } } },
+    ...(Object.keys(scope).length
+      ? [{ $match: Object.fromEntries(Object.entries(scope).map(([k, v]) => [`l.${k}`, v])) }]
+      : []),
+    {
+      $group: {
+        _id: { $cond: [{ $eq: ['$cause', 'expired'] }, 'expired', 'damaged'] },
+        value: { $sum: { $multiply: ['$qtyMoved', '$l.birth.unitCost'] } },
+        units: { $sum: '$qtyMoved' },
+      },
+    },
   ]);
   const n = (x: unknown) => Math.round(Number(x ?? 0) * 100) / 100;
   const deathCount = deaths.reduce((s, d) => s + d.count, 0);
@@ -422,15 +602,33 @@ export async function stats(user: AuthUser, now = new Date()) {
     dead,
     recalledAlive: recalled,
     expiringSoon,
-    deathsByCause: deaths.map((d) => ({ cause: d._id, count: d.count, avgLifespanDays: n(d.avgLifespanDays), avgLifeUsedPct: d.avgLifeUsedPct === null ? null : n(d.avgLifeUsedPct), valueLost: n(d.valueLost) })),
-    averageLifespanDays: deathCount ? n(deaths.reduce((s, d) => s + d.avgLifespanDays * d.count, 0) / deathCount) : null,
+    deathsByCause: deaths.map((d) => ({
+      cause: d._id,
+      count: d.count,
+      avgLifespanDays: n(d.avgLifespanDays),
+      avgLifeUsedPct: d.avgLifeUsedPct === null ? null : n(d.avgLifeUsedPct),
+      valueLost: n(d.valueLost),
+    })),
+    averageLifespanDays: deathCount
+      ? n(deaths.reduce((s, d) => s + d.avgLifespanDays * d.count, 0) / deathCount)
+      : null,
     averageLifeUsedAtDeath: (() => {
       const withLife = deaths.filter((d) => d.avgLifeUsedPct !== null);
       const c = withLife.reduce((s, d) => s + d.count, 0);
       return c ? n(withLife.reduce((s, d) => s + d.avgLifeUsedPct * d.count, 0) / c) : null;
     })(),
-    valueLostByCause: { expired: n(v.expired), damaged: n(v.damaged), shrinkage: n(v.shrinkage), recalled: n(v.recalled), writtenOff: n(v.writtenOff) },
-    diedThisMonthByCause: recentDeaths.map((d) => ({ cause: d._id, count: d.count, valueLost: n(d.valueLost) })),
+    valueLostByCause: {
+      expired: n(v.expired),
+      damaged: n(v.damaged),
+      shrinkage: n(v.shrinkage),
+      recalled: n(v.recalled),
+      writtenOff: n(v.writtenOff),
+    },
+    diedThisMonthByCause: recentDeaths.map((d) => ({
+      cause: d._id,
+      count: d.count,
+      valueLost: n(d.valueLost),
+    })),
     valueLostThisMonth: {
       expired: n(monthLoss.find((m) => m._id === 'expired')?.value),
       damaged: n(monthLoss.find((m) => m._id === 'damaged')?.value),
@@ -442,16 +640,30 @@ export async function stats(user: AuthUser, now = new Date()) {
 
 /** Compares, per lot, the genes' running totals, the header counters and the sum of stock slices. */
 export async function reconcileAll() {
-  const lots = await StockLot.find().select('dnaCode qtyBorn qtyAdded qtyOnHand qtyInTransit qtyOutByCause').lean();
-  const lastGenes = await DnaEvent.aggregate([{ $sort: { lot: 1, seq: -1 } }, { $group: { _id: '$lot', seq: { $first: '$seq' }, qtyAfter: { $first: '$qtyAfter' } } }]);
-  const slices = await StockLevel.aggregate([{ $match: { lot: { $ne: null } } }, { $group: { _id: '$lot', qty: { $sum: '$quantity' } } }]);
+  const lots = await StockLot.find()
+    .select('dnaCode qtyBorn qtyAdded qtyOnHand qtyInTransit qtyOutByCause')
+    .lean();
+  const lastGenes = await DnaEvent.aggregate([
+    { $sort: { lot: 1, seq: -1 } },
+    { $group: { _id: '$lot', seq: { $first: '$seq' }, qtyAfter: { $first: '$qtyAfter' } } },
+  ]);
+  const slices = await StockLevel.aggregate([
+    { $match: { lot: { $ne: null } } },
+    { $group: { _id: '$lot', qty: { $sum: '$quantity' } } },
+  ]);
   const gm = new Map(lastGenes.map((g) => [idStr(g._id)!, geneTotals([g])]));
   const sm = new Map(slices.map((s) => [idStr(s._id)!, s.qty as number]));
   const drift = reconcileLots(
     lots.map((l) => ({
       lot: l._id.toHexString(),
       dnaCode: l.dnaCode,
-      header: { qtyBorn: l.qtyBorn, qtyAdded: l.qtyAdded, qtyOnHand: l.qtyOnHand, qtyInTransit: l.qtyInTransit, qtyOutByCause: l.qtyOutByCause as never },
+      header: {
+        qtyBorn: l.qtyBorn,
+        qtyAdded: l.qtyAdded,
+        qtyOnHand: l.qtyOnHand,
+        qtyInTransit: l.qtyInTransit,
+        qtyOutByCause: l.qtyOutByCause as never,
+      },
       geneOnHand: gm.get(l._id.toHexString())?.onHand ?? 0,
       geneInTransit: gm.get(l._id.toHexString())?.inTransit ?? 0,
       sliceOnHand: sm.get(l._id.toHexString()) ?? 0,
@@ -464,7 +676,12 @@ export async function reconcileAll() {
 /** Life certificate PDF: birth certificate, the full gene list and, for a dead lot, the death certificate. */
 export async function certificatePdf(id: string, user: AuthUser) {
   const lot = await readableLot(id, user);
-  const genes = await DnaEvent.find({ lot: lot._id }).sort({ seq: 1 }).populate('actor', 'name').populate('warehouse', 'code').populate('toWarehouse', 'code').lean();
+  const genes = await DnaEvent.find({ lot: lot._id })
+    .sort({ seq: 1 })
+    .populate('actor', 'name')
+    .populate('warehouse', 'code')
+    .populate('toWarehouse', 'code')
+    .lean();
   const product = lot.product as unknown as { sku: string; name: string; unit?: string };
   const supplier = lot.supplier as unknown as { name: string } | null;
   const birthWh = lot.birth?.warehouse as unknown as { code: string; name: string } | null;
@@ -478,7 +695,10 @@ export async function certificatePdf(id: string, user: AuthUser) {
       ['Product', `${product?.sku ?? ''} ${product?.name ?? ''}`],
       ['Batch', lot.batchNo || '-'],
       ['Supplier', supplier?.name ?? '-'],
-      ['Born', `${dt(lot.birth?.at)} UTC as ${String(lot.birth?.type).replace(/_/g, ' ')}${lot.birth?.backfilled ? ' (backfilled: true birth not recorded)' : ''}`],
+      [
+        'Born',
+        `${dt(lot.birth?.at)} UTC as ${String(lot.birth?.type).replace(/_/g, ' ')}${lot.birth?.backfilled ? ' (backfilled: true birth not recorded)' : ''}`,
+      ],
       ['Warehouse', birthWh ? `${birthWh.code} ${birthWh.name}` : '-'],
       ['Quantity at birth', `${lot.qtyBorn} ${product?.unit ?? ''}`],
       ['Unit cost', money(lot.birth?.unitCost ?? 0)],
@@ -504,23 +724,48 @@ export async function certificatePdf(id: string, user: AuthUser) {
       genes.map((g) => {
         const wh = (g.warehouse as unknown as { code?: string } | null)?.code ?? '';
         const to = (g.toWarehouse as unknown as { code?: string } | null)?.code;
-        const ex = user.role === 'supplier' && g.refType === 'customer_order' ? 'Dispatched to a customer' : g.explanation;
-        return [g.seq, dt(g.at), g.type.replace(/_/g, ' '), to && g.type.startsWith('transfer') ? `${wh} > ${to}` : wh, g.qtyDelta || (g.qtyMoved ? `(${g.qtyMoved} moved)` : 0), g.qtyAfter?.onHand ?? 0, (g.actor as unknown as { name?: string } | null)?.name ?? 'system', ex];
+        const ex =
+          user.role === 'supplier' && g.refType === 'customer_order'
+            ? 'Dispatched to a customer'
+            : g.explanation;
+        return [
+          g.seq,
+          dt(g.at),
+          g.type.replace(/_/g, ' '),
+          to && g.type.startsWith('transfer') ? `${wh} > ${to}` : wh,
+          g.qtyDelta || (g.qtyMoved ? `(${g.qtyMoved} moved)` : 0),
+          g.qtyAfter?.onHand ?? 0,
+          (g.actor as unknown as { name?: string } | null)?.name ?? 'system',
+          ex,
+        ];
       }),
     );
     if (lot.death) {
       doc.moveDown(0.8);
-      doc.fillColor('#8c1d2f').font('Helvetica-Bold').fontSize(12).text('Death certificate', doc.page.margins.left);
+      doc
+        .fillColor('#8c1d2f')
+        .font('Helvetica-Bold')
+        .fontSize(12)
+        .text('Death certificate', doc.page.margins.left);
       doc.font('Helvetica').fontSize(9).fillColor('#222');
       doc.text(`Cause: ${String(lot.death.cause).replace(/_/g, ' ')}`);
       doc.text(`Date: ${dt(lot.death.at)} UTC`);
       doc.text(`Lifespan: ${lot.death.lifespanDays} days`);
-      doc.text(`Shelf life used: ${lot.death.lifeUsedPct === null || lot.death.lifeUsedPct === undefined ? 'unknown' : `${Math.round(lot.death.lifeUsedPct * 100)}%`}`);
+      doc.text(
+        `Shelf life used: ${lot.death.lifeUsedPct === null || lot.death.lifeUsedPct === undefined ? 'unknown' : `${Math.round(lot.death.lifeUsedPct * 100)}%`}`,
+      );
       doc.text(`Value lost: ${money(lot.death.valueLost ?? 0)}`);
     }
     doc.moveDown(0.8);
-    doc.fillColor('#555').fontSize(8).text(`Head hash: ${lot.headHash ?? '-'}`, doc.page.margins.left);
-    doc.text(lastVerify?.at ? `${lastVerify.ok ? 'Verified' : 'Verification FAILED'} on ${dt(lastVerify.at)} UTC` : 'Not verified');
+    doc
+      .fillColor('#555')
+      .fontSize(8)
+      .text(`Head hash: ${lot.headHash ?? '-'}`, doc.page.margins.left);
+    doc.text(
+      lastVerify?.at
+        ? `${lastVerify.ok ? 'Verified' : 'Verification FAILED'} on ${dt(lastVerify.at)} UTC`
+        : 'Not verified',
+    );
   });
 }
 
@@ -541,9 +786,14 @@ export interface SliceLotInfo {
 }
 
 /** The DNA lot behind each stock slice (by slice id), for screens and engines that work on slices. */
-export async function lotInfoForSlices(slices: { _id: unknown; lot?: unknown }[], now = new Date()): Promise<Map<string, SliceLotInfo>> {
+export async function lotInfoForSlices(
+  slices: { _id: unknown; lot?: unknown }[],
+  now = new Date(),
+): Promise<Map<string, SliceLotInfo>> {
   const ids = [...new Set(slices.map((s) => idStr(s.lot)).filter((x): x is string => !!x))];
-  const lots = await StockLot.find({ _id: { $in: ids } }).select('dnaCode status flags expiryDate').lean();
+  const lots = await StockLot.find({ _id: { $in: ids } })
+    .select('dnaCode status flags expiryDate')
+    .lean();
   const byId = new Map(lots.map((l) => [l._id.toHexString(), l]));
   const out = new Map<string, SliceLotInfo>();
   for (const s of slices) {

@@ -1,0 +1,965 @@
+{
+  "info": {
+    "name": "Smart Inventory SCM - Stock DNA",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Every /api/dna route plus order reserve/ship. Run \"Login\" first; set lotId from GET /dna/lots."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "warehouseId",
+      "value": ""
+    },
+    {
+      "key": "otherWarehouseId",
+      "value": ""
+    },
+    {
+      "key": "supplierId",
+      "value": ""
+    },
+    {
+      "key": "productId",
+      "value": ""
+    },
+    {
+      "key": "finishedProductId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "offerId",
+      "value": ""
+    },
+    {
+      "key": "transferId",
+      "value": ""
+    },
+    {
+      "key": "countId",
+      "value": ""
+    },
+    {
+      "key": "countLineId",
+      "value": ""
+    },
+    {
+      "key": "discrepancyId",
+      "value": ""
+    },
+    {
+      "key": "poId",
+      "value": ""
+    },
+    {
+      "key": "alertId",
+      "value": ""
+    },
+    {
+      "key": "recoveryPlanId",
+      "value": ""
+    },
+    {
+      "key": "stockLevelId",
+      "value": ""
+    },
+    {
+      "key": "redistributionPlanId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "dependencyId",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "notificationId",
+      "value": ""
+    },
+    {
+      "key": "lotId",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (saves token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.token) pm.collectionVariables.set('token', b.token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Stock DNA",
+      "item": [
+        {
+          "name": "GET /dna/lots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots?alive=true&expiringInDays=7",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots"
+              ],
+              "query": [
+                {
+                  "key": "alive",
+                  "value": "true"
+                },
+                {
+                  "key": "expiringInDays",
+                  "value": "7"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots?recalled=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots"
+              ],
+              "query": [
+                {
+                  "key": "recalled",
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup by DNA code",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lookup?code=DNA-SKU-MLK-020-261023-0001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "DNA-SKU-MLK-020-261023-0001"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup by SKU and batch",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lookup?sku=SKU-BOX-003&batchNo=BOX-RC-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "sku",
+                  "value": "SKU-BOX-003"
+                },
+                {
+                  "key": "batchNo",
+                  "value": "BOX-RC-01"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots/{{lotId}}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots/{{lotId}}/timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/timeline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "timeline"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots/{{lotId}}/genealogy",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/genealogy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "genealogy"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots/{{lotId}}/journey",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/journey",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "journey"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /dna/lots/{{lotId}}/certificate.pdf",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/certificate.pdf",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "certificate.pdf"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "verify"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/hold",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/hold",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "hold"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Awaiting lab result\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/release",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/release",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "release"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Lab result passed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/reject",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Seal broken on inspection\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/recall",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/recall",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "recall"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Supplier recall notice\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/recall/clear",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/recall/clear",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "recall",
+                "clear"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Recall withdrawn by supplier\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/dispose",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/dispose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "dispose"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"quantity\": 10,\n  \"cause\": \"damaged\",\n  \"reason\": \"Crushed pallet\",\n  \"evidence\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/return-to-supplier",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/return-to-supplier",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "return-to-supplier"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"quantity\": 10,\n  \"reason\": \"Wrong specification\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/requests/{{requestId}}/approve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/requests/{{requestId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "requests",
+                "{{requestId}}",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Approved\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/requests/{{requestId}}/reject",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/requests/{{requestId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "requests",
+                "{{requestId}}",
+                "reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Use markdown instead\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/damage",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/damage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "damage"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"quantity\": 2,\n  \"reason\": \"Dropped during picking\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/consume",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/consume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "consume"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"quantity\": 5,\n  \"reason\": \"Used for kitting\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/put-away",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/put-away",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "put-away"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"fromBin\": \"A1\",\n  \"toBin\": \"A2\",\n  \"quantity\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /dna/lots/{{lotId}}/accept-return",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/lots/{{lotId}}/accept-return",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "lots",
+                "{{lotId}}",
+                "accept-return"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouse\": \"{{warehouseId}}\",\n  \"quantity\": 2,\n  \"reason\": \"Customer return\",\n  \"customerOrder\": \"{{orderId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /dna/recall-trace",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/recall-trace?batchNo=BOX-RC-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "recall-trace"
+              ],
+              "query": [
+                {
+                  "key": "batchNo",
+                  "value": "BOX-RC-01"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /dna/reconcile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/reconcile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "reconcile"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /dna/jobs/expiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dna/jobs/expiry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dna",
+                "jobs",
+                "expiry"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -6,7 +6,16 @@
  * lot with a death gene when its last unit leaves. Socket events are queued on ctx and sent after commit.
  */
 import { ClientSession, Types } from 'mongoose';
-import { DnaEvent, DnaLink, Product, RecoveryPlan, RedistributionPlan, StockLevel, StockLot, Warehouse } from '../models';
+import {
+  DnaEvent,
+  DnaLink,
+  Product,
+  RecoveryPlan,
+  RedistributionPlan,
+  StockLevel,
+  StockLot,
+  Warehouse,
+} from '../models';
 import { nextSequence } from '../models/Counter';
 import { withTransaction } from '../config/db';
 import { env } from '../config/env';
@@ -57,6 +66,8 @@ export interface StockCtx {
   after: (() => Promise<void> | void)[];
   /** Genes written in this transaction (returned to callers). */
   genes: GeneRecord[];
+  /** Event time for every gene in this transaction (seed scenarios replay past days); default: now. */
+  at?: Date;
 }
 
 export interface GeneRecord {
@@ -71,11 +82,16 @@ export interface GeneRecord {
 }
 
 /** Runs fn in one transaction with a fresh stock context and performs the queued after-commit work. */
-export async function runStock<T>(actor: AuthUser | null, fn: (ctx: StockCtx) => Promise<T>, approvedBy?: unknown): Promise<{ result: T; genes: GeneRecord[] }> {
+export async function runStock<T>(
+  actor: AuthUser | null,
+  fn: (ctx: StockCtx) => Promise<T>,
+  approvedBy?: unknown,
+  at?: Date,
+): Promise<{ result: T; genes: GeneRecord[] }> {
   let ctxOut: StockCtx | null = null;
   const result = await withTransaction(async (session) => {
     // a fresh context per attempt: a retried transaction must not replay the after-commit work twice
-    const ctx: StockCtx = { session, actor, approvedBy, after: [], genes: [] };
+    const ctx: StockCtx = { session, actor, approvedBy, after: [], genes: [], at };
     ctxOut = ctx;
     return fn(ctx);
   });
@@ -185,7 +201,12 @@ function emitDna(event: string, warehouse: string | null, payload: Record<string
  * hash, saves the header with an optimistic check on eventCount, anchors the hash in the audit log and, when
  * the lot just ran out, writes the death gene in the same transaction.
  */
-export async function appendGene(ctx: StockCtx, lot: LotDoc, gene: GeneInput, d: GeneDetails): Promise<GeneRecord> {
+export async function appendGene(
+  ctx: StockCtx,
+  lot: LotDoc,
+  gene: GeneInput,
+  d: GeneDetails,
+): Promise<GeneRecord> {
   const prev = stateOf(lot);
   let effect;
   try {
@@ -212,7 +233,7 @@ async function writeGene(
   d: GeneDetails & { qtyDelta: number; qtyMoved: number; cause: string | null },
   death?: Record<string, unknown> | null,
 ): Promise<GeneRecord> {
-  const at = d.at ?? new Date();
+  const at = d.at ?? ctx.at ?? new Date();
   const seq = next.eventCount;
   const doc = {
     lot: lot._id,
@@ -257,10 +278,15 @@ async function writeGene(
   const update: Record<string, unknown> = { $set: set };
   if (whs.length) update.$addToSet = { warehouses: { $each: whs.map((w) => new Types.ObjectId(w)) } };
   // the seq is taken with the expected count: two writers can never both write the same seq
-  const r = await StockLot.updateOne({ _id: lot._id, eventCount: prev.eventCount }, update, { session: ctx.session });
-  if (r.matchedCount !== 1) throw ApiError.conflict(`Lot ${lot.dnaCode} changed while recording ${type}, please retry`);
+  const r = await StockLot.updateOne({ _id: lot._id, eventCount: prev.eventCount }, update, {
+    session: ctx.session,
+  });
+  if (r.matchedCount !== 1)
+    throw ApiError.conflict(`Lot ${lot.dnaCode} changed while recording ${type}, please retry`);
   lot.set(set);
-  if (whs.length) for (const w of whs) if (!lot.warehouses.some((x) => idStr(x) === w)) lot.warehouses.push(new Types.ObjectId(w));
+  if (whs.length)
+    for (const w of whs)
+      if (!lot.warehouses.some((x) => idStr(x) === w)) lot.warehouses.push(new Types.ObjectId(w));
 
   await recordAudit(
     {
@@ -271,15 +297,41 @@ async function writeGene(
       warehouse: doc.warehouse ?? doc.fromWarehouse ?? doc.toWarehouse,
       before: null,
       after: null,
-      metadata: { dnaCode: lot.dnaCode, seq, dnaHash: hash, qtyDelta: d.qtyDelta, qtyMoved: d.qtyMoved, refType: doc.refType, refId: doc.refId },
+      metadata: {
+        dnaCode: lot.dnaCode,
+        seq,
+        dnaHash: hash,
+        qtyDelta: d.qtyDelta,
+        qtyMoved: d.qtyMoved,
+        refType: doc.refType,
+        refId: doc.refId,
+      },
     },
     ctx.session,
   );
 
-  const rec: GeneRecord = { lot: lot._id.toHexString(), dnaCode: lot.dnaCode, type, seq, hash, qtyAfter: doc.qtyAfter, at, warehouse: doc.warehouse ?? doc.toWarehouse ?? doc.fromWarehouse };
+  const rec: GeneRecord = {
+    lot: lot._id.toHexString(),
+    dnaCode: lot.dnaCode,
+    type,
+    seq,
+    hash,
+    qtyAfter: doc.qtyAfter,
+    at,
+    warehouse: doc.warehouse ?? doc.toWarehouse ?? doc.fromWarehouse,
+  };
   ctx.genes.push(rec);
   const wh = rec.warehouse;
-  ctx.after.push(() => emitDna('dna:event', wh, { lotId: rec.lot, dnaCode: rec.dnaCode, type, qtyAfter: rec.qtyAfter, at, eventId: ev._id.toHexString() }));
+  ctx.after.push(() =>
+    emitDna('dna:event', wh, {
+      lotId: rec.lot,
+      dnaCode: rec.dnaCode,
+      type,
+      qtyAfter: rec.qtyAfter,
+      at,
+      eventId: ev._id.toHexString(),
+    }),
+  );
   return rec;
 }
 
@@ -287,7 +339,7 @@ async function writeGene(
 async function seal(ctx: StockCtx, lot: LotDoc, cause: DeathCause, d: GeneDetails) {
   const prev = stateOf(lot);
   const product = await Product.findById(lot.product).session(ctx.session).select('sku unitCost').lean();
-  const at = new Date();
+  const at = ctx.at ?? new Date();
   let sealed;
   try {
     sealed = sealLot(prev, cause, {
@@ -300,7 +352,11 @@ async function seal(ctx: StockCtx, lot: LotDoc, cause: DeathCause, d: GeneDetail
   } catch (e) {
     dnaError(e);
   }
-  const death = { ...sealed.death, approvedBy: idStr(ctx.approvedBy ?? ctx.actor?._id) ?? null, note: d.explanation };
+  const death = {
+    ...sealed.death,
+    approvedBy: idStr(ctx.approvedBy ?? ctx.actor?._id) ?? null,
+    note: d.explanation,
+  };
   const lifeUsed = death.lifeUsedPct === null ? 'unknown' : `${Math.round(death.lifeUsedPct * 100)}%`;
   await writeGene(
     ctx,
@@ -321,7 +377,9 @@ async function seal(ctx: StockCtx, lot: LotDoc, cause: DeathCause, d: GeneDetail
     death,
   );
   const lotId = lot._id.toHexString();
-  ctx.after.push(() => emitDna('dna:death', null, { lotId, dnaCode: lot.dnaCode, cause, valueLost: death.valueLost, at }));
+  ctx.after.push(() =>
+    emitDna('dna:death', null, { lotId, dnaCode: lot.dnaCode, cause, valueLost: death.valueLost, at }),
+  );
   if (death.valueLost > env.dnaValueLostAlert) {
     ctx.after.push(() =>
       notifySafe(
@@ -342,15 +400,35 @@ async function seal(ctx: StockCtx, lot: LotDoc, cause: DeathCause, d: GeneDetail
 
 async function addToSlice(
   ctx: StockCtx,
-  input: { product: unknown; warehouse: unknown; bin: string; batchNo: string; expiryDate: Date | null; lot: unknown },
+  input: {
+    product: unknown;
+    warehouse: unknown;
+    bin: string;
+    batchNo: string;
+    expiryDate: Date | null;
+    lot: unknown;
+  },
   qty: number,
 ) {
-  const filter = { product: idStr(input.product), warehouse: idStr(input.warehouse), batchNo: input.batchNo, bin: input.bin };
+  const filter = {
+    product: idStr(input.product),
+    warehouse: idStr(input.warehouse),
+    batchNo: input.batchNo,
+    bin: input.bin,
+  };
   const before = await StockLevel.findOne(filter).session(ctx.session).lean();
   if (before && before.quantity > 0 && before.lot && idStr(before.lot) !== idStr(input.lot)) {
-    throw ApiError.conflict(`Bin ${input.bin || '(none)'} already holds batch ${input.batchNo || '(none)'} of another lot`);
+    throw ApiError.conflict(
+      `Bin ${input.bin || '(none)'} already holds batch ${input.batchNo || '(none)'} of another lot`,
+    );
   }
-  if (before && before.quantity > 0 && input.expiryDate && before.expiryDate && before.expiryDate.getTime() !== input.expiryDate.getTime()) {
+  if (
+    before &&
+    before.quantity > 0 &&
+    input.expiryDate &&
+    before.expiryDate &&
+    before.expiryDate.getTime() !== input.expiryDate.getTime()
+  ) {
     throw ApiError.badRequest(
       `Batch ${input.batchNo || '(none)'} in bin ${input.bin || '(none)'} already has expiry ${before.expiryDate
         .toISOString()
@@ -358,14 +436,25 @@ async function addToSlice(
     );
   }
   const update: Record<string, unknown> = { $inc: { quantity: qty }, $set: { lot: idStr(input.lot) } };
-  if (!before || before.quantity === 0) (update.$set as Record<string, unknown>).expiryDate = input.expiryDate;
-  else if (!before.expiryDate && input.expiryDate) (update.$set as Record<string, unknown>).expiryDate = input.expiryDate;
-  const line = await StockLevel.findOneAndUpdate(filter, update, { upsert: true, new: true, session: ctx.session, runValidators: true });
+  if (!before || before.quantity === 0)
+    (update.$set as Record<string, unknown>).expiryDate = input.expiryDate;
+  else if (!before.expiryDate && input.expiryDate)
+    (update.$set as Record<string, unknown>).expiryDate = input.expiryDate;
+  const line = await StockLevel.findOneAndUpdate(filter, update, {
+    upsert: true,
+    new: true,
+    session: ctx.session,
+    runValidators: true,
+  });
   return { line: line!, before };
 }
 
 async function takeFromSlice(ctx: StockCtx, sliceId: unknown, qty: number) {
-  const r = await StockLevel.updateOne({ _id: idStr(sliceId), quantity: { $gte: qty } }, { $inc: { quantity: -qty } }, { session: ctx.session });
+  const r = await StockLevel.updateOne(
+    { _id: idStr(sliceId), quantity: { $gte: qty } },
+    { $inc: { quantity: -qty } },
+    { session: ctx.session },
+  );
   if (r.modifiedCount !== 1) throw ApiError.conflict('Stock changed while it was being moved, please retry');
 }
 
@@ -375,7 +464,10 @@ async function takeLotAt(ctx: StockCtx, lot: LotDoc, warehouse: unknown, qty: nu
   if (bin) filter.bin = bin;
   const slices = await StockLevel.find(filter).session(ctx.session).sort({ quantity: 1 }).lean();
   const have = slices.reduce((s, x) => s + x.quantity, 0);
-  if (have < qty) throw ApiError.badRequest(`Lot ${lot.dnaCode} has ${have} at this warehouse${bin ? ` (bin ${bin})` : ''}, requested ${qty}`);
+  if (have < qty)
+    throw ApiError.badRequest(
+      `Lot ${lot.dnaCode} has ${have} at this warehouse${bin ? ` (bin ${bin})` : ''}, requested ${qty}`,
+    );
   let left = qty;
   const taken: { slice: string; bin: string; quantity: number }[] = [];
   for (const s of slices) {
@@ -399,7 +491,11 @@ async function nextDnaCode(ctx: StockCtx, sku: string, at: Date) {
 }
 
 async function findAliveLot(ctx: StockCtx, product: unknown, batchNo: string) {
-  return StockLot.findOne({ product: idStr(product), batchNo, status: { $in: ['quarantine', 'active', 'expired'] } }).session(ctx.session);
+  return StockLot.findOne({
+    product: idStr(product),
+    batchNo,
+    status: { $in: ['quarantine', 'active', 'expired'] },
+  }).session(ctx.session);
 }
 
 interface CreateLotInput {
@@ -424,11 +520,14 @@ interface CreateLotInput {
 }
 
 async function createLot(ctx: StockCtx, input: CreateLotInput) {
-  const at = input.at ?? new Date();
+  const at = input.at ?? ctx.at ?? new Date();
   const expiry = input.expiryDate ?? null;
   // manufacture date: given, or derived from the product's shelf life so "shelf life used" can be measured
   const mfg =
-    input.manufactureDate ?? (expiry && input.product.shelfLifeDays ? new Date(expiry.getTime() - input.product.shelfLifeDays * DAY_MS) : null);
+    input.manufactureDate ??
+    (expiry && input.product.shelfLifeDays
+      ? new Date(expiry.getTime() - input.product.shelfLifeDays * DAY_MS)
+      : null);
   const [lot] = await StockLot.create(
     [
       {
@@ -500,7 +599,11 @@ export interface BirthHint {
 const BACKFILL_NOTE = 'Backfilled from existing stock; true birth not recorded';
 
 /** Gives one orphan slice (stock with no DNA lot) a lot: joins the alive lot of its batch or creates one. */
-async function adoptOne(ctx: StockCtx, s: InstanceType<typeof StockLevel> | Record<string, any>, hint: BirthHint | null) {
+async function adoptOne(
+  ctx: StockCtx,
+  s: InstanceType<typeof StockLevel> | Record<string, any>,
+  hint: BirthHint | null,
+) {
   const product = await Product.findById(s.product).session(ctx.session);
   const wh = await Warehouse.findById(s.warehouse).session(ctx.session);
   if (!product || !wh) return null;
@@ -523,15 +626,22 @@ async function adoptOne(ctx: StockCtx, s: InstanceType<typeof StockLevel> | Reco
       grnNo: hint?.grnNo ?? null,
       backfilled: !hint,
       at: hint?.at ?? (s as { createdAt?: Date }).createdAt ?? new Date(),
-      explanation: hint ? `${hint.explanation}: ${s.quantity} at ${where}` : `${BACKFILL_NOTE}: ${s.quantity} found at ${where}`,
+      explanation: hint
+        ? `${hint.explanation}: ${s.quantity} at ${where}`
+        : `${BACKFILL_NOTE}: ${s.quantity} found at ${where}`,
     });
     created = true;
   } else {
-    await appendGene(ctx, lot, { type: 'receive_more', qty: s.quantity, adopt: true }, {
-      warehouse: wh._id,
-      bin: s.bin,
-      explanation: `${BACKFILL_NOTE}: ${s.quantity} more found at ${where}`,
-    });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'receive_more', qty: s.quantity, adopt: true },
+      {
+        warehouse: wh._id,
+        bin: s.bin,
+        explanation: `${BACKFILL_NOTE}: ${s.quantity} more found at ${where}`,
+      },
+    );
   }
   await StockLevel.updateOne({ _id: s._id, lot: null }, { $set: { lot: lot._id } }, { session: ctx.session });
   return { lot, created };
@@ -542,7 +652,10 @@ async function adoptOne(ctx: StockCtx, s: InstanceType<typeof StockLevel> | Reco
  * service), inside the caller's transaction. Groups by batch: joins the alive lot of that batch, or creates
  * a backfilled lot whose born gene says the true birth was not recorded.
  */
-export async function adoptSlices(ctx: StockCtx, filter: { product?: unknown; warehouse?: unknown; batchNo?: string } = {}) {
+export async function adoptSlices(
+  ctx: StockCtx,
+  filter: { product?: unknown; warehouse?: unknown; batchNo?: string } = {},
+) {
   const q: Record<string, unknown> = { lot: null, quantity: { $gt: 0 } };
   if (filter.product) q.product = idStr(filter.product);
   if (filter.warehouse) q.warehouse = idStr(filter.warehouse);
@@ -562,7 +675,10 @@ export async function adoptSlices(ctx: StockCtx, filter: { product?: unknown; wa
  * backfilled. Running it again finds no orphans, so it is idempotent.
  */
 export async function backfillLots(resolveHint: (slice: Record<string, any>) => Promise<BirthHint | null>) {
-  const orphans = await StockLevel.find({ lot: null, quantity: { $gt: 0 } }).sort({ createdAt: 1, _id: 1 }).select('_id').lean();
+  const orphans = await StockLevel.find({ lot: null, quantity: { $gt: 0 } })
+    .sort({ createdAt: 1, _id: 1 })
+    .select('_id')
+    .lean();
   let lotsCreated = 0;
   let backfilled = 0;
   let fromHistory = 0;
@@ -610,12 +726,15 @@ export interface ReceiveLotInput {
 export async function receiveLot(ctx: StockCtx, input: ReceiveLotInput) {
   const product = await requireActiveProduct(input.product, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
-  if (product.isPerishable && !input.expiryDate) throw ApiError.badRequest(`${product.sku} is perishable: an expiry date is required`);
+  if (product.isPerishable && !input.expiryDate)
+    throw ApiError.badRequest(`${product.sku} is perishable: an expiry date is required`);
   const bin = resolveBin(wh, input.bin);
   const batchNo = (input.batchNo ?? '').trim();
   await adoptSlices(ctx, { product: product._id, batchNo });
   let lot = await findAliveLot(ctx, product._id, batchNo);
-  const source = input.explanation ?? `Received ${input.quantity} ${product.unit ?? 'units'} of ${product.sku} at ${wh.code}`;
+  const source =
+    input.explanation ??
+    `Received ${input.quantity} ${product.unit ?? 'units'} of ${product.sku} at ${wh.code}`;
   let created = false;
   if (lot) {
     if (lot.expiryDate && input.expiryDate && lot.expiryDate.getTime() !== input.expiryDate.getTime()) {
@@ -623,14 +742,19 @@ export async function receiveLot(ctx: StockCtx, input: ReceiveLotInput) {
         `Batch ${batchNo || '(none)'} already has expiry ${lot.expiryDate.toISOString().slice(0, 10)}; use a different batch number`,
       );
     }
-    await appendGene(ctx, lot, { type: 'receive_more', qty: input.quantity }, {
-      warehouse: wh._id,
-      bin,
-      refType: input.refType,
-      refId: input.refId,
-      explanation: `${source} (more of batch ${batchNo || '(none)'})`,
-      at: input.at,
-    });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'receive_more', qty: input.quantity },
+      {
+        warehouse: wh._id,
+        bin,
+        refType: input.refType,
+        refId: input.refId,
+        explanation: `${source} (more of batch ${batchNo || '(none)'})`,
+        at: input.at,
+      },
+    );
   } else {
     lot = await createLot(ctx, {
       product,
@@ -652,31 +776,64 @@ export async function receiveLot(ctx: StockCtx, input: ReceiveLotInput) {
     });
     created = true;
     if (bin) {
-      await appendGene(ctx, lot, { type: 'put_away' }, { warehouse: wh._id, bin, explanation: `Put away in bin ${bin} at ${wh.code}`, at: input.at });
+      await appendGene(
+        ctx,
+        lot,
+        { type: 'put_away' },
+        { warehouse: wh._id, bin, explanation: `Put away in bin ${bin} at ${wh.code}`, at: input.at },
+      );
     }
   }
   const { line, before } = await addToSlice(
     ctx,
-    { product: product._id, warehouse: wh._id, bin, batchNo, expiryDate: input.expiryDate ?? lot.expiryDate ?? null, lot: lot._id },
+    {
+      product: product._id,
+      warehouse: wh._id,
+      bin,
+      batchNo,
+      expiryDate: input.expiryDate ?? lot.expiryDate ?? null,
+      lot: lot._id,
+    },
     input.quantity,
   );
   return { lot, line, before, created };
 }
 
 /** Moves part of a lot between bins of one warehouse (put_away gene, no quantity change). */
-export async function putAway(ctx: StockCtx, lotId: unknown, input: { warehouse: unknown; fromBin: string; toBin: string; quantity: number }) {
+export async function putAway(
+  ctx: StockCtx,
+  lotId: unknown,
+  input: { warehouse: unknown; fromBin: string; toBin: string; quantity: number },
+) {
   const lot = await loadLot(lotId, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
   const toBin = resolveBin(wh, input.toBin);
   if (toBin === input.fromBin) throw ApiError.badRequest('Choose a different bin');
-  if (isDead(lot.status as LotStatus)) throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
+  if (isDead(lot.status as LotStatus))
+    throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
   await takeLotAt(ctx, lot, wh._id, input.quantity, input.fromBin);
-  await addToSlice(ctx, { product: lot.product, warehouse: wh._id, bin: toBin, batchNo: lot.batchNo, expiryDate: lot.expiryDate ?? null, lot: lot._id }, input.quantity);
-  return appendGene(ctx, lot, { type: 'put_away' }, {
-    warehouse: wh._id,
-    bin: toBin,
-    explanation: `Moved ${input.quantity} from bin ${input.fromBin || '(none)'} to bin ${toBin} at ${wh.code}`,
-  });
+  await addToSlice(
+    ctx,
+    {
+      product: lot.product,
+      warehouse: wh._id,
+      bin: toBin,
+      batchNo: lot.batchNo,
+      expiryDate: lot.expiryDate ?? null,
+      lot: lot._id,
+    },
+    input.quantity,
+  );
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'put_away' },
+    {
+      warehouse: wh._id,
+      bin: toBin,
+      explanation: `Moved ${input.quantity} from bin ${input.fromBin || '(none)'} to bin ${toBin} at ${wh.code}`,
+    },
+  );
 }
 
 interface PickRequest {
@@ -688,21 +845,41 @@ interface PickRequest {
 }
 
 /** FEFO allocation over the lots at a warehouse, skipping expired, quarantined and recalled lots. */
-async function pick(ctx: StockCtx, req: PickRequest, now = new Date()): Promise<(LotAllocation & { dnaCode: string })[]> {
+async function pick(
+  ctx: StockCtx,
+  req: PickRequest,
+  now = ctx.at ?? new Date(),
+): Promise<(LotAllocation & { dnaCode: string })[]> {
   await adoptSlices(ctx, { product: req.product, warehouse: req.warehouse });
-  const filter: Record<string, unknown> = { product: idStr(req.product), warehouse: idStr(req.warehouse), quantity: { $gt: 0 } };
+  const filter: Record<string, unknown> = {
+    product: idStr(req.product),
+    warehouse: idStr(req.warehouse),
+    quantity: { $gt: 0 },
+  };
   if (req.bin) filter.bin = req.bin;
   if (req.batchNo) filter.batchNo = req.batchNo;
   const slices = await StockLevel.find(filter).session(ctx.session).lean();
   const lotIds = [...new Set(slices.map((s) => idStr(s.lot)).filter((x): x is string => !!x))];
-  const lots = await StockLot.find({ _id: { $in: lotIds } }).session(ctx.session).lean();
+  const lots = await StockLot.find({ _id: { $in: lotIds } })
+    .session(ctx.session)
+    .lean();
   const byId = new Map(lots.map((l) => [l._id.toHexString(), l]));
   if (req.batchNo) {
     // an explicitly chosen batch that is blocked gets a precise error instead of "insufficient stock"
     for (const s of slices) {
       const l = byId.get(idStr(s.lot)!);
-      const why = l ? pickBlockReason({ lotStatus: l.status as LotStatus, recalled: !!l.flags?.recalled, expiryDate: s.expiryDate ?? null }, now) : null;
-      if (why) throw ApiError.conflict(`Lot ${l!.dnaCode} (batch ${req.batchNo}) cannot be picked: it is ${why}`);
+      const why = l
+        ? pickBlockReason(
+            {
+              lotStatus: l.status as LotStatus,
+              recalled: !!l.flags?.recalled,
+              expiryDate: s.expiryDate ?? null,
+            },
+            now,
+          )
+        : null;
+      if (why)
+        throw ApiError.conflict(`Lot ${l!.dnaCode} (batch ${req.batchNo}) cannot be picked: it is ${why}`);
     }
   }
   try {
@@ -727,7 +904,9 @@ async function pick(ctx: StockCtx, req: PickRequest, now = new Date()): Promise<
       now,
     ).map((a) => ({ ...a, dnaCode: byId.get(a.lot)!.dnaCode }));
   } catch (e) {
-    const scope = [req.batchNo ? `batch ${req.batchNo}` : '', req.bin ? `bin ${req.bin}` : ''].filter(Boolean).join(', ');
+    const scope = [req.batchNo ? `batch ${req.batchNo}` : '', req.bin ? `bin ${req.bin}` : '']
+      .filter(Boolean)
+      .join(', ');
     if (e instanceof DnaRuleError) throw ApiError.badRequest(`${e.message}${scope ? ` (${scope})` : ''}`);
     throw e;
   }
@@ -741,7 +920,12 @@ function byLot<T extends { lot: string; quantity: number }>(allocs: T[]) {
 }
 
 function fefoNote(allocs: { dnaCode: string; quantity: number; expiryDate: Date | null }[]) {
-  return allocs.map((a) => `${a.dnaCode} x ${a.quantity}${a.expiryDate ? ` (expires ${new Date(a.expiryDate).toISOString().slice(0, 10)})` : ''}`).join('; ');
+  return allocs
+    .map(
+      (a) =>
+        `${a.dnaCode} x ${a.quantity}${a.expiryDate ? ` (expires ${new Date(a.expiryDate).toISOString().slice(0, 10)})` : ''}`,
+    )
+    .join('; ');
 }
 
 export interface DispatchInput extends PickRequest {
@@ -763,41 +947,66 @@ export async function dispatchFefo(ctx: StockCtx, input: DispatchInput) {
     const lot = await loadLot(lotId, ctx.session);
     const q = parts.reduce((s, p) => s + p.quantity, 0);
     for (const p of parts) await takeFromSlice(ctx, p.lineId, p.quantity);
-    await appendGene(ctx, lot, { type: 'pick_fefo', qty: q }, {
-      warehouse: wh._id,
-      bin: parts[0].bin,
-      refType: input.refType,
-      refId: input.refId,
-      explanation: `FEFO pick of ${input.quantity} at ${wh.code}: ${note}`,
-    });
-    await appendGene(ctx, lot, { type: 'dispatch_sale', qty: q }, {
-      warehouse: wh._id,
-      bin: parts[0].bin,
-      refType: input.refType,
-      refId: input.refId,
-      explanation: input.explanation ?? `Dispatched ${q} from ${wh.code}`,
-    });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'pick_fefo', qty: q },
+      {
+        warehouse: wh._id,
+        bin: parts[0].bin,
+        refType: input.refType,
+        refId: input.refId,
+        explanation: `FEFO pick of ${input.quantity} at ${wh.code}: ${note}`,
+      },
+    );
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'dispatch_sale', qty: q },
+      {
+        warehouse: wh._id,
+        bin: parts[0].bin,
+        refType: input.refType,
+        refId: input.refId,
+        explanation: input.explanation ?? `Dispatched ${q} from ${wh.code}`,
+      },
+    );
   }
   return allocs;
 }
 
 /** Consumption (production or internal use) of a lot at a warehouse. */
-export async function consume(ctx: StockCtx, lotId: unknown, input: { warehouse: unknown; quantity: number; reason: string; refType?: string | null; refId?: unknown }) {
+export async function consume(
+  ctx: StockCtx,
+  lotId: unknown,
+  input: { warehouse: unknown; quantity: number; reason: string; refType?: string | null; refId?: unknown },
+) {
   const lot = await loadLot(lotId, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
   const st = stateOf(lot);
-  if (st.status !== 'active' || st.flags.recalled) throw ApiError.conflict(`Lot ${lot.dnaCode} cannot be consumed: it is ${st.flags.recalled ? 'recalled' : st.status}`);
+  if (st.status !== 'active' || st.flags.recalled)
+    throw ApiError.conflict(
+      `Lot ${lot.dnaCode} cannot be consumed: it is ${st.flags.recalled ? 'recalled' : st.status}`,
+    );
   await takeLotAt(ctx, lot, wh._id, input.quantity);
-  return appendGene(ctx, lot, { type: 'consume', qty: input.quantity }, {
-    warehouse: wh._id,
-    refType: input.refType,
-    refId: input.refId,
-    explanation: `Consumed ${input.quantity} at ${wh.code}: ${input.reason}`,
-  });
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'consume', qty: input.quantity },
+    {
+      warehouse: wh._id,
+      refType: input.refType,
+      refId: input.refId,
+      explanation: `Consumed ${input.quantity} at ${wh.code}: ${input.reason}`,
+    },
+  );
 }
 
 /** Decision note on every lot an approved plan's transfer draws from (the plan's own numbers). */
-async function planNote(ctx: StockCtx, transfer: TransferLike): Promise<{ text: string; refType: string; refId: unknown } | null> {
+async function planNote(
+  ctx: StockCtx,
+  transfer: TransferLike,
+): Promise<{ text: string; refType: string; refId: unknown } | null> {
   if (transfer.plan && transfer.planModel === 'RedistributionPlan') {
     const p = await RedistributionPlan.findById(transfer.plan).session(ctx.session).lean();
     if (!p) return null;
@@ -805,13 +1014,23 @@ async function planNote(ctx: StockCtx, transfer: TransferLike): Promise<{ text: 
     const nums = line
       ? `${line.toWarehouseName} can sell ${line.destDailyDemand} x ${line.sellWindowDays} days = ${round(Number(line.destDailyDemand) * Number(line.sellWindowDays))}; holds ${line.destExistingUnits}; capacity ${line.capacityUnits}; move ${line.quantity}`
       : `move ${transfer.quantity}`;
-    return { text: `Redistribution plan ${p.planNo}: ${nums}. Residual ${p.residualUnits ?? 0} (${p.residualAdvice}).`, refType: 'redistribution_plan', refId: p._id };
+    return {
+      text: `Redistribution plan ${p.planNo}: ${nums}. Residual ${p.residualUnits ?? 0} (${p.residualAdvice}).`,
+      refType: 'redistribution_plan',
+      refId: p._id,
+    };
   }
   if (transfer.plan && transfer.planModel === 'RecoveryPlan') {
     const p = await RecoveryPlan.findById(transfer.plan).session(ctx.session).lean();
     if (!p) return null;
     const opt = (p.options ?? []).find((o) => o.optionId === p.selectedOptionId);
-    const steps = (opt?.steps ?? []).map((s) => (s.type === 'transfer' ? `transfer ${s.quantity} from ${s.fromWarehouseName}` : `buy ${s.quantity} from ${s.supplierName}`)).join(' + ');
+    const steps = (opt?.steps ?? [])
+      .map((s) =>
+        s.type === 'transfer'
+          ? `transfer ${s.quantity} from ${s.fromWarehouseName}`
+          : `buy ${s.quantity} from ${s.supplierName}`,
+      )
+      .join(' + ');
     return {
       text: `Recovery plan ${p.planNo} (${opt?.label ?? 'selected option'}): required ${p.context?.requiredUnits ?? '?'} units; ${steps}; shortage left ${opt?.shortageLeft ?? 0}.`,
       refType: 'recovery_plan',
@@ -819,7 +1038,11 @@ async function planNote(ctx: StockCtx, transfer: TransferLike): Promise<{ text: 
     };
   }
   if (transfer.source === 'rebalance') {
-    return { text: `Rebalance before buying: ${transfer.notes || `move ${transfer.quantity} to cover a shortfall`}`, refType: 'transfer', refId: transfer._id };
+    return {
+      text: `Rebalance before buying: ${transfer.notes || `move ${transfer.quantity} to cover a shortfall`}`,
+      refType: 'transfer',
+      refId: transfer._id,
+    };
   }
   return null;
 }
@@ -854,34 +1077,61 @@ export interface TransferAllocation {
 export async function shipTransfer(ctx: StockCtx, t: TransferLike): Promise<TransferAllocation[]> {
   const from = await requireActiveWarehouse(t.fromWarehouse, ctx.session);
   const to = await requireActiveWarehouse(t.toWarehouse, ctx.session);
-  const allocs = await pick(ctx, { product: t.product, warehouse: from._id, quantity: t.quantity, batchNo: t.batchNo || null });
+  const allocs = await pick(ctx, {
+    product: t.product,
+    warehouse: from._id,
+    quantity: t.quantity,
+    batchNo: t.batchNo || null,
+  });
   const note = await planNote(ctx, t);
   for (const [lotId, parts] of byLot(allocs)) {
     const lot = await loadLot(lotId, ctx.session);
     const q = parts.reduce((s, p) => s + p.quantity, 0);
     for (const p of parts) await takeFromSlice(ctx, p.lineId, p.quantity);
     if (note) {
-      await appendGene(ctx, lot, { type: 'decision_note' }, { warehouse: from._id, refType: note.refType, refId: note.refId, explanation: note.text });
+      await appendGene(
+        ctx,
+        lot,
+        { type: 'decision_note' },
+        { warehouse: from._id, refType: note.refType, refId: note.refId, explanation: note.text },
+      );
     }
     if (!t.batchNo) {
-      await appendGene(ctx, lot, { type: 'pick_fefo', qty: q }, {
+      await appendGene(
+        ctx,
+        lot,
+        { type: 'pick_fefo', qty: q },
+        {
+          warehouse: from._id,
+          refType: 'transfer',
+          refId: t._id,
+          explanation: `FEFO pick of ${t.quantity} for transfer to ${to.code}: ${fefoNote(allocs)}`,
+        },
+      );
+    }
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'transfer_out', qty: q },
+      {
         warehouse: from._id,
+        fromWarehouse: from._id,
+        toWarehouse: to._id,
+        bin: parts[0].bin,
         refType: 'transfer',
         refId: t._id,
-        explanation: `FEFO pick of ${t.quantity} for transfer to ${to.code}: ${fefoNote(allocs)}`,
-      });
-    }
-    await appendGene(ctx, lot, { type: 'transfer_out', qty: q }, {
-      warehouse: from._id,
-      fromWarehouse: from._id,
-      toWarehouse: to._id,
-      bin: parts[0].bin,
-      refType: 'transfer',
-      refId: t._id,
-      explanation: `Shipped ${q} from ${from.code} to ${to.code}`,
-    });
+        explanation: `Shipped ${q} from ${from.code} to ${to.code}`,
+      },
+    );
   }
-  return allocs.map((a) => ({ lot: a.lot, dnaCode: a.dnaCode, batchNo: a.batchNo, bin: a.bin, expiryDate: a.expiryDate, quantity: a.quantity }));
+  return allocs.map((a) => ({
+    lot: a.lot,
+    dnaCode: a.dnaCode,
+    batchNo: a.batchNo,
+    bin: a.bin,
+    expiryDate: a.expiryDate,
+    quantity: a.quantity,
+  }));
 }
 
 /** Receives a shipped transfer at the destination: transfer_in genes, slices keep batch and expiry. */
@@ -918,45 +1168,86 @@ export async function receiveTransfer(
       continue;
     }
     const lot = await loadLot(a.lot, ctx.session);
-    await appendGene(ctx, lot, { type: 'transfer_in', qty: a.quantity }, {
-      warehouse: to._id,
-      fromWarehouse: from._id,
-      toWarehouse: to._id,
-      bin: target,
-      refType: 'transfer',
-      refId: t._id,
-      explanation: `Received ${a.quantity} at ${to.code} from ${from.code}`,
-    });
-    const { line } = await addToSlice(ctx, { product: t.product, warehouse: to._id, bin: target, batchNo, expiryDate: a.expiryDate ?? lot.expiryDate ?? null, lot: lot._id }, a.quantity);
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'transfer_in', qty: a.quantity },
+      {
+        warehouse: to._id,
+        fromWarehouse: from._id,
+        toWarehouse: to._id,
+        bin: target,
+        refType: 'transfer',
+        refId: t._id,
+        explanation: `Received ${a.quantity} at ${to.code} from ${from.code}`,
+      },
+    );
+    const { line } = await addToSlice(
+      ctx,
+      {
+        product: t.product,
+        warehouse: to._id,
+        bin: target,
+        batchNo,
+        expiryDate: a.expiryDate ?? lot.expiryDate ?? null,
+        lot: lot._id,
+      },
+      a.quantity,
+    );
     lines.push(line);
   }
   return lines;
 }
 
 /** Reserves stock of a warehouse for a customer order by FEFO, without moving it (reserve genes). */
-export async function reserve(ctx: StockCtx, input: { product: unknown; warehouse: unknown; quantity: number; refType: string; refId: unknown }) {
+export async function reserve(
+  ctx: StockCtx,
+  input: { product: unknown; warehouse: unknown; quantity: number; refType: string; refId: unknown },
+) {
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
   const allocs = await pick(ctx, { product: input.product, warehouse: wh._id, quantity: input.quantity });
   const out = [];
   for (const [lotId, parts] of byLot(allocs)) {
     const lot = await loadLot(lotId, ctx.session);
     const q = parts.reduce((s, p) => s + p.quantity, 0);
-    await appendGene(ctx, lot, { type: 'reserve', qty: q }, {
-      warehouse: wh._id,
-      refType: input.refType,
-      refId: input.refId,
-      explanation: `Reserved ${q} at ${wh.code} for ${input.refType.replace(/_/g, ' ')}`,
-    });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'reserve', qty: q },
+      {
+        warehouse: wh._id,
+        refType: input.refType,
+        refId: input.refId,
+        explanation: `Reserved ${q} at ${wh.code} for ${input.refType.replace(/_/g, ' ')}`,
+      },
+    );
     out.push({ lot: lotId, dnaCode: lot.dnaCode, quantity: q });
   }
   return out;
 }
 
 /** Releases what a reference reserved on each lot (release_reserve genes). */
-export async function releaseReserve(ctx: StockCtx, input: { refType: string; refId: unknown; explanation: string }) {
+export async function releaseReserve(
+  ctx: StockCtx,
+  input: { refType: string; refId: unknown; explanation: string },
+) {
   const held = await DnaEvent.aggregate([
-    { $match: { refType: input.refType, refId: new Types.ObjectId(idStr(input.refId)!), type: { $in: ['reserve', 'release_reserve'] } } },
-    { $group: { _id: '$lot', reserved: { $sum: { $cond: [{ $eq: ['$type', 'reserve'] }, '$qtyMoved', { $multiply: ['$qtyMoved', -1] }] } }, warehouse: { $last: '$warehouse' } } },
+    {
+      $match: {
+        refType: input.refType,
+        refId: new Types.ObjectId(idStr(input.refId)!),
+        type: { $in: ['reserve', 'release_reserve'] },
+      },
+    },
+    {
+      $group: {
+        _id: '$lot',
+        reserved: {
+          $sum: { $cond: [{ $eq: ['$type', 'reserve'] }, '$qtyMoved', { $multiply: ['$qtyMoved', -1] }] },
+        },
+        warehouse: { $last: '$warehouse' },
+      },
+    },
   ]).session(ctx.session);
   const out = [];
   for (const h of held) {
@@ -964,7 +1255,12 @@ export async function releaseReserve(ctx: StockCtx, input: { refType: string; re
     const lot = await loadLot(h._id, ctx.session);
     if (isDead(lot.status as LotStatus) || (lot.qtyReserved ?? 0) <= 0) continue;
     const q = Math.min(h.reserved, lot.qtyReserved ?? 0);
-    await appendGene(ctx, lot, { type: 'release_reserve', qty: q }, { warehouse: h.warehouse, refType: input.refType, refId: input.refId, explanation: input.explanation });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'release_reserve', qty: q },
+      { warehouse: h.warehouse, refType: input.refType, refId: input.refId, explanation: input.explanation },
+    );
     out.push({ lot: idStr(h._id), quantity: q });
   }
   return out;
@@ -973,9 +1269,23 @@ export async function releaseReserve(ctx: StockCtx, input: { refType: string; re
 /** Posts a cycle-count variance to the slice it was counted in (count_adjust gene: shrinkage or added). */
 export async function postCountAdjustment(
   ctx: StockCtx,
-  input: { product: unknown; warehouse: unknown; bin: string; batchNo: string; expiryDate?: Date | null; variance: number; refId: unknown; countNo: string },
+  input: {
+    product: unknown;
+    warehouse: unknown;
+    bin: string;
+    batchNo: string;
+    expiryDate?: Date | null;
+    variance: number;
+    refId: unknown;
+    countNo: string;
+  },
 ) {
-  const filter = { product: idStr(input.product), warehouse: idStr(input.warehouse), batchNo: input.batchNo, bin: input.bin };
+  const filter = {
+    product: idStr(input.product),
+    warehouse: idStr(input.warehouse),
+    batchNo: input.batchNo,
+    bin: input.bin,
+  };
   await adoptSlices(ctx, { product: input.product, warehouse: input.warehouse, batchNo: input.batchNo });
   const live = await StockLevel.findOne(filter).session(ctx.session).lean();
   const from = live?.quantity ?? 0;
@@ -984,25 +1294,39 @@ export async function postCountAdjustment(
     const q = Math.min(from, -input.variance);
     const lot = await loadLot(live.lot, ctx.session);
     await takeFromSlice(ctx, live._id, q);
-    await appendGene(ctx, lot, { type: 'count_adjust', qty: -q }, {
-      warehouse: input.warehouse,
-      bin: input.bin,
-      refType: 'stock_count',
-      refId: input.refId,
-      explanation: `Count ${input.countNo}: system ${from}, counted ${from - q}; shrinkage ${q}`,
-    });
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'count_adjust', qty: -q },
+      {
+        warehouse: input.warehouse,
+        bin: input.bin,
+        refType: 'stock_count',
+        refId: input.refId,
+        explanation: `Count ${input.countNo}: system ${from}, counted ${from - q}; shrinkage ${q}`,
+      },
+    );
     return { lineId: live._id, from, to: from - q, variance: -q };
   }
   if (live && from > 0 && live.lot) {
     const lot = await loadLot(live.lot, ctx.session);
-    await appendGene(ctx, lot, { type: 'count_adjust', qty: input.variance }, {
-      warehouse: input.warehouse,
-      bin: input.bin,
-      refType: 'stock_count',
-      refId: input.refId,
-      explanation: `Count ${input.countNo}: system ${from}, counted ${from + input.variance}; ${input.variance} added`,
-    });
-    const { line } = await addToSlice(ctx, { ...filter, expiryDate: live.expiryDate ?? null, lot: lot._id }, input.variance);
+    await appendGene(
+      ctx,
+      lot,
+      { type: 'count_adjust', qty: input.variance },
+      {
+        warehouse: input.warehouse,
+        bin: input.bin,
+        refType: 'stock_count',
+        refId: input.refId,
+        explanation: `Count ${input.countNo}: system ${from}, counted ${from + input.variance}; ${input.variance} added`,
+      },
+    );
+    const { line } = await addToSlice(
+      ctx,
+      { ...filter, expiryDate: live.expiryDate ?? null, lot: lot._id },
+      input.variance,
+    );
     return { lineId: line._id, from, to: line.quantity, variance: input.variance };
   }
   // nothing on record in that bin: the counted stock is born here as an opening balance
@@ -1024,17 +1348,27 @@ export async function postCountAdjustment(
 }
 
 /** Damage or loss of a lot at a warehouse (damage gene). */
-export async function recordDamage(ctx: StockCtx, lotId: unknown, input: { warehouse: unknown; quantity: number; reason: string; bin?: string | null; evidence?: string[] }) {
+export async function recordDamage(
+  ctx: StockCtx,
+  lotId: unknown,
+  input: { warehouse: unknown; quantity: number; reason: string; bin?: string | null; evidence?: string[] },
+) {
   const lot = await loadLot(lotId, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
-  if (isDead(lot.status as LotStatus)) throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
+  if (isDead(lot.status as LotStatus))
+    throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
   await takeLotAt(ctx, lot, wh._id, input.quantity, input.bin);
-  return appendGene(ctx, lot, { type: 'damage', qty: input.quantity }, {
-    warehouse: wh._id,
-    bin: input.bin ?? null,
-    explanation: `Damaged or lost: ${input.quantity} at ${wh.code}. ${input.reason}`,
-    evidence: input.evidence,
-  });
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'damage', qty: input.quantity },
+    {
+      warehouse: wh._id,
+      bin: input.bin ?? null,
+      explanation: `Damaged or lost: ${input.quantity} at ${wh.code}. ${input.reason}`,
+      evidence: input.evidence,
+    },
+  );
 }
 
 async function flagGene(ctx: StockCtx, lotId: unknown, type: GeneType, explanation: string) {
@@ -1043,10 +1377,14 @@ async function flagGene(ctx: StockCtx, lotId: unknown, type: GeneType, explanati
   return { lot, gene };
 }
 
-export const holdLot = (ctx: StockCtx, lotId: unknown, reason: string) => flagGene(ctx, lotId, 'qc_hold', `QC hold: ${reason}`);
-export const releaseLot = (ctx: StockCtx, lotId: unknown, reason: string) => flagGene(ctx, lotId, 'qc_release', `QC released: ${reason}`);
-export const rejectLot = (ctx: StockCtx, lotId: unknown, reason: string) => flagGene(ctx, lotId, 'qc_reject', `QC rejected: ${reason}`);
-export const clearRecall = (ctx: StockCtx, lotId: unknown, reason: string) => flagGene(ctx, lotId, 'recall_clear', `Recall cleared: ${reason}`);
+export const holdLot = (ctx: StockCtx, lotId: unknown, reason: string) =>
+  flagGene(ctx, lotId, 'qc_hold', `QC hold: ${reason}`);
+export const releaseLot = (ctx: StockCtx, lotId: unknown, reason: string) =>
+  flagGene(ctx, lotId, 'qc_release', `QC released: ${reason}`);
+export const rejectLot = (ctx: StockCtx, lotId: unknown, reason: string) =>
+  flagGene(ctx, lotId, 'qc_reject', `QC rejected: ${reason}`);
+export const clearRecall = (ctx: StockCtx, lotId: unknown, reason: string) =>
+  flagGene(ctx, lotId, 'recall_clear', `Recall cleared: ${reason}`);
 
 /** Flags a recall: dispatch and transfers are blocked at once (C.4). */
 export async function flagRecall(ctx: StockCtx, lotId: unknown, reason: string) {
@@ -1057,7 +1395,12 @@ export async function flagRecall(ctx: StockCtx, lotId: unknown, reason: string) 
   ctx.after.push(() =>
     notifySafe(
       { roles: ['admin', 'warehouse_manager'] },
-      { type: 'dna.recall', subject: `Recall: lot ${lot.dnaCode}`, body: `Lot ${lot.dnaCode} (batch ${lot.batchNo || '-'}) was recalled: ${reason}. Dispatch is blocked.`, link: `/dna/${id}` },
+      {
+        type: 'dna.recall',
+        subject: `Recall: lot ${lot.dnaCode}`,
+        body: `Lot ${lot.dnaCode} (batch ${lot.batchNo || '-'}) was recalled: ${reason}. Dispatch is blocked.`,
+        link: `/dna/${id}`,
+      },
     ),
   );
   return r;
@@ -1071,7 +1414,8 @@ export async function disposeLot(
 ) {
   const lot = await loadLot(lotId, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
-  if (isDead(lot.status as LotStatus)) throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
+  if (isDead(lot.status as LotStatus))
+    throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
   // validate the cause before touching stock
   try {
     applyGene(stateOf(lot), { type: 'write_off', qty: input.quantity, cause: input.cause });
@@ -1079,23 +1423,38 @@ export async function disposeLot(
     dnaError(e);
   }
   await takeLotAt(ctx, lot, wh._id, input.quantity);
-  return appendGene(ctx, lot, { type: 'write_off', qty: input.quantity, cause: input.cause }, {
-    warehouse: wh._id,
-    explanation: `Disposed ${input.quantity} at ${wh.code} (${input.cause.replace(/_/g, ' ')}): ${input.reason}`,
-    evidence: input.evidence,
-  });
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'write_off', qty: input.quantity, cause: input.cause },
+    {
+      warehouse: wh._id,
+      explanation: `Disposed ${input.quantity} at ${wh.code} (${input.cause.replace(/_/g, ' ')}): ${input.reason}`,
+      evidence: input.evidence,
+    },
+  );
 }
 
 /** Sends a quantity back to the supplier (return_to_supplier gene). */
-export async function returnToSupplier(ctx: StockCtx, lotId: unknown, input: { warehouse: unknown; quantity: number; reason: string }) {
+export async function returnToSupplier(
+  ctx: StockCtx,
+  lotId: unknown,
+  input: { warehouse: unknown; quantity: number; reason: string },
+) {
   const lot = await loadLot(lotId, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
-  if (isDead(lot.status as LotStatus)) throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
+  if (isDead(lot.status as LotStatus))
+    throw ApiError.conflict(`Lot ${lot.dnaCode} is dead; its DNA is sealed`);
   await takeLotAt(ctx, lot, wh._id, input.quantity);
-  return appendGene(ctx, lot, { type: 'return_to_supplier', qty: input.quantity }, {
-    warehouse: wh._id,
-    explanation: `Returned ${input.quantity} to the supplier from ${wh.code}: ${input.reason}`,
-  });
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'return_to_supplier', qty: input.quantity },
+    {
+      warehouse: wh._id,
+      explanation: `Returned ${input.quantity} to the supplier from ${wh.code}: ${input.reason}`,
+    },
+  );
 }
 
 /**
@@ -1105,18 +1464,28 @@ export async function returnToSupplier(ctx: StockCtx, lotId: unknown, input: { w
 export async function acceptReturn(
   ctx: StockCtx,
   parentId: unknown,
-  input: { warehouse: unknown; quantity: number; bin?: string | null; reason: string; refType?: string | null; refId?: unknown },
+  input: {
+    warehouse: unknown;
+    quantity: number;
+    bin?: string | null;
+    reason: string;
+    refType?: string | null;
+    refId?: unknown;
+  },
 ) {
   const parent = await loadLot(parentId, ctx.session);
   const product = await requireActiveProduct(parent.product, ctx.session);
   const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
   const sold = parent.qtyOutByCause?.sold ?? 0;
-  const returned = await DnaLink.aggregate([{ $match: { parentLot: parent._id, relation: 'return' } }, { $group: { _id: null, q: { $sum: '$qty' } } }]).session(
-    ctx.session,
-  );
+  const returned = await DnaLink.aggregate([
+    { $match: { parentLot: parent._id, relation: 'return' } },
+    { $group: { _id: null, q: { $sum: '$qty' } } },
+  ]).session(ctx.session);
   const already = returned[0]?.q ?? 0;
   if (input.quantity > sold - already) {
-    throw ApiError.badRequest(`Lot ${parent.dnaCode} shipped ${sold} to customers and ${already} came back already; cannot accept ${input.quantity}`);
+    throw ApiError.badRequest(
+      `Lot ${parent.dnaCode} shipped ${sold} to customers and ${already} came back already; cannot accept ${input.quantity}`,
+    );
   }
   const n = (await DnaLink.countDocuments({ parentLot: parent._id }).session(ctx.session)) + 1;
   const bin = resolveBin(wh, input.bin);
@@ -1138,21 +1507,138 @@ export async function acceptReturn(
     explanation: `Customer return of ${input.quantity} from lot ${parent.dnaCode} at ${wh.code}: ${input.reason}`,
   });
   const ev = await DnaEvent.findOne({ lot: child._id, seq: 1 }).session(ctx.session).select('_id').lean();
-  await DnaLink.create([{ parentLot: parent._id, childLot: child._id, relation: 'return', qty: input.quantity, at: new Date(), eventId: ev?._id ?? null }], {
-    session: ctx.session,
-  });
-  const { line } = await addToSlice(ctx, { product: product._id, warehouse: wh._id, bin, batchNo: child.batchNo, expiryDate: child.expiryDate ?? null, lot: child._id }, input.quantity);
+  await DnaLink.create(
+    [
+      {
+        parentLot: parent._id,
+        childLot: child._id,
+        relation: 'return',
+        qty: input.quantity,
+        at: ctx.at ?? new Date(),
+        eventId: ev?._id ?? null,
+      },
+    ],
+    {
+      session: ctx.session,
+    },
+  );
+  const { line } = await addToSlice(
+    ctx,
+    {
+      product: product._id,
+      warehouse: wh._id,
+      bin,
+      batchNo: child.batchNo,
+      expiryDate: child.expiryDate ?? null,
+      lot: child._id,
+    },
+    input.quantity,
+  );
   return { child, line };
 }
 
 /** A decision note on a lot (an approved engine decision touched it). */
-export async function addDecisionNote(ctx: StockCtx, lotId: unknown, input: { explanation: string; refType: string; refId: unknown; warehouse?: unknown }) {
+export async function addDecisionNote(
+  ctx: StockCtx,
+  lotId: unknown,
+  input: { explanation: string; refType: string; refId: unknown; warehouse?: unknown },
+) {
   const lot = await loadLot(lotId, ctx.session);
-  return appendGene(ctx, lot, { type: 'decision_note' }, { warehouse: input.warehouse ?? lot.birth?.warehouse, refType: input.refType, refId: input.refId, explanation: input.explanation });
+  return appendGene(
+    ctx,
+    lot,
+    { type: 'decision_note' },
+    {
+      warehouse: input.warehouse ?? lot.birth?.warehouse,
+      refType: input.refType,
+      refId: input.refId,
+      explanation: input.explanation,
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Expiry job (C.10)
+
+/** The expire gene: an alive lot passed its expiry date with stock left; it stays alive but is not sellable. */
+export async function expireLot(ctx: StockCtx, lotOrId: LotDoc | unknown) {
+  const lot = lotOrId instanceof StockLot ? (lotOrId as LotDoc) : await loadLot(lotOrId, ctx.session);
+  const st = stateOf(lot);
+  const exp = lot.expiryDate;
+  if (!exp) throw ApiError.badRequest(`Lot ${lot.dnaCode} has no expiry date`);
+  const gene = await appendGene(
+    ctx,
+    lot,
+    { type: 'expire' },
+    {
+      warehouse: lot.birth?.warehouse,
+      explanation: `Expired on ${exp.toISOString().slice(0, 10)} with ${st.qtyOnHand} on hand and ${st.qtyInTransit} in transit; not sellable`,
+    },
+  );
+  const id = lot._id.toHexString();
+  ctx.after.push(() =>
+    notifySafe(
+      { roles: ['admin', 'warehouse_manager'] },
+      {
+        type: 'dna.expired',
+        subject: `Lot ${lot.dnaCode} expired with stock left`,
+        body: `${st.qtyOnHand} units of lot ${lot.dnaCode} expired; dispose or return them.`,
+        link: `/dna/${id}`,
+      },
+    ),
+  );
+  return gene;
+}
+
+/**
+ * Stock carried over from a system without Stock DNA (a migration or legacy import): the slice is recorded
+ * together with a backfilled lot whose born gene says the true birth was not recorded. This is the same
+ * record npm run dna:backfill gives to orphan stock.
+ */
+export async function recordLegacyBalance(
+  ctx: StockCtx,
+  input: {
+    product: unknown;
+    warehouse: unknown;
+    bin?: string | null;
+    batchNo: string;
+    expiryDate?: Date | null;
+    quantity: number;
+    at?: Date;
+  },
+) {
+  const product = await requireActiveProduct(input.product, ctx.session);
+  const wh = await requireActiveWarehouse(input.warehouse, ctx.session);
+  const bin = resolveBin(wh, input.bin);
+  if (await findAliveLot(ctx, product._id, input.batchNo))
+    throw ApiError.conflict(`Batch ${input.batchNo} already has an alive lot`);
+  const lot = await createLot(ctx, {
+    product,
+    warehouse: wh,
+    bin,
+    batchNo: input.batchNo,
+    qty: input.quantity,
+    birthType: 'opening_balance',
+    supplier: product.primarySupplier,
+    expiryDate: input.expiryDate ?? null,
+    backfilled: true,
+    at: input.at,
+    explanation: `${BACKFILL_NOTE}: ${input.quantity} carried over at ${wh.code}${bin ? ` bin ${bin}` : ''}`,
+  });
+  const { line } = await addToSlice(
+    ctx,
+    {
+      product: product._id,
+      warehouse: wh._id,
+      bin,
+      batchNo: input.batchNo,
+      expiryDate: input.expiryDate ?? null,
+      lot: lot._id,
+    },
+    input.quantity,
+  );
+  return { lot, line };
+}
 
 /**
  * For every alive lot: past expiry with stock left -> expire gene; within the warning window -> one
@@ -1169,34 +1655,34 @@ export async function runExpiryJob(now = new Date()) {
   let expired = 0;
   let warned = 0;
   for (const c of candidates) {
-    const { result } = await runStock(null, async (ctx) => {
-      const lot = await loadLot(c._id, ctx.session);
-      const st = stateOf(lot);
-      const exp = lot.expiryDate!;
-      if (st.status === 'active' && exp.getTime() <= now.getTime() && st.qtyOnHand + st.qtyInTransit > 0) {
-        await appendGene(ctx, lot, { type: 'expire' }, {
-          warehouse: lot.birth?.warehouse,
-          explanation: `Expired on ${exp.toISOString().slice(0, 10)} with ${st.qtyOnHand} on hand and ${st.qtyInTransit} in transit; not sellable`,
-        });
-        const id = lot._id.toHexString();
-        ctx.after.push(() =>
-          notifySafe(
-            { roles: ['admin', 'warehouse_manager'] },
-            { type: 'dna.expired', subject: `Lot ${lot.dnaCode} expired with stock left`, body: `${st.qtyOnHand} units of lot ${lot.dnaCode} expired; dispose or return them.`, link: `/dna/${id}` },
-          ),
-        );
-        return 'expired';
-      }
-      if (exp.getTime() > now.getTime() && !st.flags.expiryWarned && isAlive(st.status)) {
-        const days = Math.round(((exp.getTime() - now.getTime()) / DAY_MS) * 10) / 10;
-        await appendGene(ctx, lot, { type: 'expiry_warning' }, {
-          warehouse: lot.birth?.warehouse,
-          explanation: `Expires in ${days} days (${exp.toISOString().slice(0, 10)}) with ${st.qtyOnHand} on hand`,
-        });
-        return 'warned';
-      }
-      return null;
-    });
+    const { result } = await runStock(
+      null,
+      async (ctx) => {
+        const lot = await loadLot(c._id, ctx.session);
+        const st = stateOf(lot);
+        const exp = lot.expiryDate!;
+        if (st.status === 'active' && exp.getTime() <= now.getTime() && st.qtyOnHand + st.qtyInTransit > 0) {
+          await expireLot(ctx, lot);
+          return 'expired';
+        }
+        if (exp.getTime() > now.getTime() && !st.flags.expiryWarned && isAlive(st.status)) {
+          const days = Math.round(((exp.getTime() - now.getTime()) / DAY_MS) * 10) / 10;
+          await appendGene(
+            ctx,
+            lot,
+            { type: 'expiry_warning' },
+            {
+              warehouse: lot.birth?.warehouse,
+              explanation: `Expires in ${days} days (${exp.toISOString().slice(0, 10)}) with ${st.qtyOnHand} on hand`,
+            },
+          );
+          return 'warned';
+        }
+        return null;
+      },
+      undefined,
+      now,
+    );
     if (result === 'expired') expired++;
     if (result === 'warned') warned++;
   }

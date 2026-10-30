@@ -22,6 +22,7 @@ import { checkOverduePOs, evaluateStockAlerts, sweepExpiry } from '../services/a
 import { announcePending } from '../services/purchaseOrders';
 import { flushNotifications } from '../services/notifications';
 import { receiveLot, runStock } from '../services/stockService';
+import { seedDnaScenarios } from './dnaScenarios';
 import {
   CUSTOMER_ORDERS,
   DEMAND,
@@ -232,6 +233,9 @@ export async function seedDatabase(opts: { ifEmpty?: boolean; log?: (m: string) 
     await audit('seed.customer_order', 'CustomerOrder', co, co.warehouse);
   }
 
+  // Stock DNA scenarios (illustrative life stories for every DNA screen)
+  await seedDnaScenarios(now);
+
   // alerts derived from the data
   await announcePending(pending);
   for (const s of STOCK) await evaluateStockAlerts(p[s.sku]._id, wh[s.wh]._id);
@@ -241,7 +245,7 @@ export async function seedDatabase(opts: { ifEmpty?: boolean; log?: (m: string) 
   await flushNotifications();
 
   const counts: Record<string, number> = {};
-  for (const name of ['users', 'warehouses', 'suppliers', 'products', 'stocklevels', 'purchaseorders', 'demandhistory', 'alerts', 'auditlogs', 'customerorders']) {
+  for (const name of ['users', 'warehouses', 'suppliers', 'products', 'stocklevels', 'purchaseorders', 'demandhistory', 'alerts', 'auditlogs', 'customerorders', 'stocklots', 'dnaevents']) {
     counts[name] = await db.collection(name).countDocuments();
   }
   return { skipped: false, counts };
