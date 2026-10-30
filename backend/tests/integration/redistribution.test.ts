@@ -1,4 +1,4 @@
-import { RedistributionPlan, StockLevel, Transfer, TransferRoute } from '../../src/models';
+import { DnaEvent, RedistributionPlan, StockLevel, StockLot, Transfer, TransferRoute } from '../../src/models';
 import { DAY_MS } from '../../src/utils/dates';
 import { api, auth, clearDb, day, makeWorld, seedDemand, startDb, stopDb, World } from './helpers';
 
@@ -56,6 +56,17 @@ describe('expiry-aware redistribution (Example B)', () => {
     expect((await RedistributionPlan.findById(p.body._id))!.status).toBe('completed');
     const detail = await api().get(`/api/redistribution/plans/${p.body._id}`).set(auth(w.admin.token));
     expect(detail.body.transfers[0].status).toBe('completed');
+    // Stock DNA (C.12 test 15): the executed plan left a decision_note with its numbers on the batch's lot
+    const lot = await StockLot.findOne({ product: w.milk._id, batchNo: 'MLK-A-001' }).lean();
+    expect(lot).toMatchObject({ qtyOnHand: 500, qtyInTransit: 0 });
+    const note = await DnaEvent.findOne({ lot: lot!._id, type: 'decision_note' }).lean();
+    expect(note).toMatchObject({ refType: 'redistribution_plan', refId: expect.anything() });
+    expect(note!.explanation).toBe(
+      `Redistribution plan ${p.body.planNo}: Warehouse B can sell 120 x 4 days = 480; holds 100; capacity 380; move 380. Residual 120 (markdown).`,
+    );
+    const types = (await DnaEvent.find({ lot: lot!._id }).sort({ seq: 1 }).lean()).map((g) => g.type);
+    expect(types.slice(-3)).toEqual(['decision_note', 'transfer_out', 'transfer_in']);
+    expect(detail.body.dnaCodes).toEqual([lot!.dnaCode]);
   });
 
   it('rejects and cancels proposed plans', async () => {

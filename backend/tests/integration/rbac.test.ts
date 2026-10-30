@@ -9,6 +9,26 @@ type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
 
 const X = '0123456789abcdef01234567';
 const routes: [Method, string, Role, Role][] = [
+  ['get', '/api/dna/recall-trace?batchNo=X', 'manager', 'staff'],
+  ['post', '/api/dna/reconcile', 'admin', 'manager'],
+  ['post', '/api/dna/jobs/expiry', 'admin', 'manager'],
+  ['get', `/api/dna/lots/${X}/certificate.pdf`, 'manager', 'staff'],
+  ['post', `/api/dna/lots/${X}/verify`, 'manager', 'staff'],
+  ['post', `/api/dna/lots/${X}/hold`, 'manager', 'staff'],
+  ['post', `/api/dna/lots/${X}/release`, 'manager', 'supplier'],
+  ['post', `/api/dna/lots/${X}/reject`, 'admin', 'staff'],
+  ['post', `/api/dna/lots/${X}/recall`, 'admin', 'manager'],
+  ['post', `/api/dna/lots/${X}/recall/clear`, 'admin', 'staff'],
+  ['post', `/api/dna/lots/${X}/dispose`, 'manager', 'staff'],
+  ['post', `/api/dna/lots/${X}/return-to-supplier`, 'manager', 'supplier'],
+  ['post', `/api/dna/lots/${X}/requests/${X}/approve`, 'admin', 'manager'],
+  ['post', `/api/dna/lots/${X}/requests/${X}/reject`, 'admin', 'manager'],
+  ['post', `/api/dna/lots/${X}/damage`, 'manager', 'staff'],
+  ['post', `/api/dna/lots/${X}/consume`, 'admin', 'staff'],
+  ['post', `/api/dna/lots/${X}/put-away`, 'staff', 'supplier'],
+  ['post', `/api/dna/lots/${X}/accept-return`, 'manager', 'staff'],
+  ['post', `/api/customer-orders/${X}/reserve`, 'manager', 'staff'],
+  ['post', `/api/customer-orders/${X}/ship`, 'admin', 'staff'],
   ['get', '/api/users', 'admin', 'manager'],
   ['post', '/api/users', 'admin', 'manager'],
   ['patch', `/api/users/${X}`, 'admin', 'staff'],
@@ -139,7 +159,7 @@ describe('RBAC guard on every protected route', () => {
   });
 
   it('allows reads for every signed-in role on shared lists', async () => {
-    for (const path of ['/api/warehouses', '/api/products', '/api/stock', '/api/suppliers', '/api/purchase-orders', '/api/notifications', '/api/config']) {
+    for (const path of ['/api/warehouses', '/api/products', '/api/stock', '/api/suppliers', '/api/purchase-orders', '/api/notifications', '/api/config', '/api/dna/lots', '/api/dna/stats']) {
       for (const role of ['admin', 'manager', 'staff', 'supplier'] as Role[]) {
         expect((await api().get(path).set(auth(tokens[role]))).status).toBe(200);
       }

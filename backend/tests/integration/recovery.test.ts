@@ -1,4 +1,4 @@
-import { Product, PurchaseOrder, RecoveryPlan, StockLevel, StockPolicy, Supplier, SupplierOffer, Transfer, TransferRoute } from '../../src/models';
+import { DnaEvent, Product, PurchaseOrder, RecoveryPlan, StockLevel, StockPolicy, Supplier, SupplierOffer, Transfer, TransferRoute } from '../../src/models';
 import { api, auth, clearDb, makeWorld, putStock, seedDemand, startDb, stopDb, World } from './helpers';
 
 let w: World;
@@ -85,6 +85,11 @@ describe('recovery engine on live data (Example A)', () => {
     await api().post(`/api/transfers/${transfers[0]._id}/dispatch`).set(auth(w.southManager.token)).expect(200);
     await api().post(`/api/transfers/${transfers[0]._id}/receive`).set(auth(w.staff.token)).expect(200);
     expect((await RecoveryPlan.findById(plan._id))!.status).toBe('in_progress');
+    // Stock DNA (C.12 test 15): the lot the transfer drew from carries the plan's decision with its numbers
+    const note = await DnaEvent.findOne({ type: 'decision_note', refType: 'recovery_plan' }).lean();
+    expect(note!.explanation).toBe(
+      `Recovery plan ${plan.planNo} (${plan.options.find((o: any) => o.optionId === plan.selectedOptionId).label}): required 300 units; transfer 200 from Warehouse B + buy 100 from Initech Supplies; shortage left 0.`,
+    );
 
     await api()
       .post(`/api/purchase-orders/${pos[0]._id}/receive`)
