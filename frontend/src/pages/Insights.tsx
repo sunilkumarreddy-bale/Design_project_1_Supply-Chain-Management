@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useUpdateProductMutation } from '../api/inventory';
 import { useInsightsQuery, useRebalanceQuery } from '../api/insights';
 import { useProposeRedistributionMutation } from '../api/modules';
+import { useDnaStatsQuery } from '../api/dna';
+import { DnaCodeLink } from '../components/dna/LotParts';
 import { useAppSelector } from '../app/store';
 import Badge, { ClassChip } from '../components/Badge';
 import DataTable from '../components/DataTable';
@@ -127,6 +129,7 @@ export default function Insights() {
           <ExplainPanel explanation={why.explanation} />
         </div>
       )}
+      <ValueLostCard />
       <div className="grid grid-2 mt">
         <div className="card">
           <div className="card-head">
@@ -149,7 +152,21 @@ export default function Insights() {
             columns={[
               { key: 'p', header: 'Product', render: (r) => r.product.sku },
               { key: 'w', header: 'Warehouse', render: (r) => r.warehouse.code },
-              { key: 'b', header: 'Batch', render: (r) => r.batchNo || '—' },
+              {
+                key: 'b',
+                header: 'Batch',
+                render: (r) =>
+                  r.lot && r.dnaCode ? (
+                    <span>
+                      {r.batchNo || '—'}
+                      <br />
+                      <DnaCodeLink id={r.lot} code={r.dnaCode} />
+                      {r.lotStatus === 'expired' && <Badge status="expired" />}
+                    </span>
+                  ) : (
+                    r.batchNo || '—'
+                  ),
+              },
               { key: 'd', header: 'Days left', align: 'right', render: (r) => r.daysLeft, sortValue: (r) => r.daysLeft },
               { key: 'u', header: 'Units', align: 'right', render: (r) => number(r.units, 0) },
               { key: 'waste', header: 'Projected waste', align: 'right', render: (r) => <span className={r.projectedWaste > 0 ? 'error-text' : ''}>{number(r.projectedWaste, 0)}</span>, sortValue: (r) => r.projectedWaste },
@@ -158,7 +175,7 @@ export default function Insights() {
                 key: 'a',
                 header: '',
                 render: (r) =>
-                  r.projectedWaste > 0 ? (
+                  r.projectedWaste > 0 && r.lotStatus !== 'expired' ? (
                     <button
                       type="button"
                       className="btn btn-sm btn-primary"
@@ -177,5 +194,45 @@ export default function Insights() {
         </div>
       </div>
     </>
+  );
+}
+
+/** Value lost by cause, from Stock DNA (unit cost at birth x quantity lost). */
+function ValueLostCard() {
+  const q = useDnaStatsQuery();
+  const v = q.data?.valueLostByCause;
+  const rows = v
+    ? ([
+        ['Expired', v.expired],
+        ['Damaged', v.damaged],
+        ['Shrinkage', v.shrinkage],
+        ['Recalled', v.recalled],
+        ['Written off', v.writtenOff],
+      ] as [string, number][])
+    : [];
+  return (
+    <div className="card mt">
+      <div className="card-head">
+        <h2>Value lost by cause</h2>
+        <Link to="/dna?alive=false" className="small">
+          Open Stock DNA ›
+        </Link>
+      </div>
+      <QueryState loading={q.isLoading} error={q.error} onRetry={q.refetch}>
+        <div className="counters">
+          {rows.map(([k, n]) => (
+            <div key={k} className="counter">
+              <div className="stat-label">{k}</div>
+              <strong>{rupees(n, true)}</strong>
+            </div>
+          ))}
+          <div className="counter">
+            <div className="stat-label">Total</div>
+            <strong>{rupees(rows.reduce((t, [, n]) => t + n, 0), true)}</strong>
+          </div>
+        </div>
+        <p className="muted small mt">From every lot&apos;s DNA: quantity expired, damaged, short at count, recalled or written off, at its unit cost at birth.</p>
+      </QueryState>
+    </div>
   );
 }

@@ -1,4 +1,6 @@
+import { ClientSession } from 'mongoose';
 import { AuditLog } from '../models';
+import { withTransaction } from '../config/db';
 import { nextSequence } from '../models/Counter';
 import { computeHash, GENESIS_HASH } from '../engines/hashChain';
 import { idStr, snapshot } from '../utils/ids';
@@ -18,20 +20,37 @@ export interface AuditInput {
 let tail: Promise<unknown> = Promise.resolve();
 
 /**
- * Appends one hash-chained audit entry (F6). Writes are serialised within this process so each entry
- * links to the previous one; the sequence number comes from the atomic Counter("audit").
+ * Appends one hash-chained audit entry (F6). Every entry is written in a transaction that increments the
+ * Counter("audit") document, so concurrent writers (in this or another process) are serialised by MongoDB:
+ * the next writer only sees the counter after the previous entry has committed, and links to its hash.
+ *
+ * With a session the entry joins the caller's transaction and commits or rolls back with it (used by the
+ * stock service so every Stock DNA gene is anchored atomically). Without one, the entry gets its own
+ * transaction; those writes are also queued within this process to avoid needless write conflicts.
  */
-export function recordAudit(input: AuditInput) {
-  const run = tail.then(() => write(input));
+export function recordAudit(input: AuditInput, session?: ClientSession) {
+  if (session) return write(input, session);
+  return serialWrite(() => withTransaction((s) => write(input, s)));
+}
+
+/**
+ * Runs writes that append to the audit chain one at a time within this process. Every such write takes
+ * the single Counter("audit") document, so letting them overlap only produces MongoDB write conflicts and
+ * retry storms (measured: p95 16.7 s at 30 concurrent writers before this queue, see docs/LOAD_RESULTS.md).
+ * Work queued here must not itself wait for another serialWrite (it would wait for itself).
+ */
+export function serialWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tail.then(fn);
   tail = run.catch(() => undefined);
   return run;
 }
 
-async function write(input: AuditInput) {
-  const seq = await nextSequence('audit');
+async function write(input: AuditInput, session: ClientSession) {
+  const seq = await nextSequence('audit', session);
   const prev = await AuditLog.findOne({ seq: { $lt: seq } })
     .sort({ seq: -1 })
     .select('hash')
+    .session(session)
     .lean();
   const prevHash = prev?.hash ?? GENESIS_HASH;
   const actor = input.actor && typeof input.actor === 'object' ? input.actor.id : idStr(input.actor);
@@ -49,7 +68,8 @@ async function write(input: AuditInput) {
     createdAt,
   };
   const hash = computeHash(prevHash, entry);
-  return AuditLog.create({ ...entry, prevHash, hash });
+  const [doc] = await AuditLog.create([{ ...entry, prevHash, hash }], { session });
+  return doc;
 }
 
 /** Waits until queued audit writes have finished (used by tests and graceful shutdown). */

@@ -28,6 +28,9 @@ export const EVENT_TAGS: Record<string, Tag[]> = {
   'supplier:update': ['Supplier'],
   'count:update': ['Count'],
   'notification:new': ['Notification'],
+  'dna:event': ['Dna', 'Stock'],
+  'dna:death': ['Dna', 'Dashboard'],
+  'dna:recall': ['Dna', 'Stock'],
 };
 
 function summarize(event: string, payload: any): string {
@@ -35,6 +38,7 @@ function summarize(event: string, payload: any): string {
   if (event.startsWith('po:')) return `${payload?.poNumber ?? 'Purchase order'} ${event.slice(3)}`;
   if (event === 'stock:update') return `Stock ${payload?.action ?? 'changed'}`;
   if (event === 'notification:new') return payload?.subject ?? 'Notification';
+  if (event.startsWith('dna:')) return `${payload?.dnaCode ?? 'Lot'} ${event === 'dna:event' ? String(payload?.type ?? 'event').replace(/_/g, ' ') : event.slice(4)}`;
   return event.replace(':', ' ');
 }
 
@@ -62,6 +66,7 @@ export default function SocketManager() {
           dispatch(addToast(p.message ?? 'New alert', p.severity === 'critical' ? 'error' : 'warning'));
         }
         if (event === 'notification:new') dispatch(bumpUnread());
+        if (event === 'dna:recall') dispatch(addToast(`Recall: lot ${(payload as { dnaCode?: string }).dnaCode ?? ''} is blocked from dispatch`, 'warning'));
       });
     }
     return () => {

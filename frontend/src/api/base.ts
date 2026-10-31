@@ -47,6 +47,7 @@ export const TAGS = [
   'Run',
   'Notification',
   'Config',
+  'Dna',
 ] as const;
 export type Tag = (typeof TAGS)[number];
 

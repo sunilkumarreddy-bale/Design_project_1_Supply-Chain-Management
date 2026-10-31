@@ -20,7 +20,10 @@
     "test:coverage": "jest --runInBand --coverage",
     "lint": "eslint src tests",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dna:backfill": "tsx src/seed/dnaBackfill.ts",
+    "dna:backfill:prod": "node dist/seed/dnaBackfill.js",
+    "seed:dna": "tsx src/seed/dnaScenarios.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

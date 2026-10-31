@@ -147,11 +147,14 @@ export interface StockLine {
   expiryDate: string | null;
   quantity: number;
   reorderPoint: number;
+  lot?: string | null;
   createdAt?: string;
 }
 
 export interface Allocation {
   lineId?: string;
+  lot?: string;
+  dnaCode?: string;
   batchNo: string;
   bin: string;
   expiryDate: string | null;
@@ -353,6 +356,9 @@ export interface InsightRow {
 
 export interface ExpiryRiskRow {
   stockLevelId: string;
+  dnaCode?: string | null;
+  lot?: string | null;
+  lotStatus?: string | null;
   product: ProductRef;
   warehouse: WarehouseRef;
   batchNo: string;
@@ -500,6 +506,7 @@ export interface RecoveryPlan {
   timeline?: TimelineEntry[];
   transfers?: Transfer[];
   purchaseOrders?: (Omit<PurchaseOrder, 'supplier'> & { supplier: SupplierRef })[];
+  dnaLots?: { _id: string; dnaCode: string; status: string; batchNo: string }[];
   createdAt: string;
 }
 
@@ -557,6 +564,7 @@ export interface BatchAnalysis {
   daysLeft?: number;
   projectedWaste?: number;
   valueAtRisk?: number;
+  lot?: { lot: string; dnaCode: string; status: string; recalled: boolean; remainingShelfDays: number | null; sellable: boolean } | null;
 }
 
 export type RedistributionStatus = 'proposed' | 'approved' | 'in_progress' | 'completed' | 'rejected' | 'cancelled';
@@ -583,6 +591,7 @@ export interface RedistributionPlan {
   rejectedReason: string;
   timeline?: TimelineEntry[];
   transfers?: Transfer[];
+  dnaLots?: { _id: string; dnaCode: string; status: string }[];
   createdAt: string;
 }
 
@@ -781,4 +790,215 @@ export interface PendingApprovals {
   recoveryPlans: { _id: string; planNo: string; product: ProductRef; targetWarehouse: WarehouseRef; option: RecoveryOption | null; createdAt: string }[];
   redistributionPlans: { _id: string; planNo: string; product: ProductRef; sourceWarehouse: WarehouseRef; batchNo: string; units: number; createdAt: string }[];
   transfers: Transfer[];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Stock DNA
+
+export type LotStatus = 'quarantine' | 'active' | 'expired' | 'depleted' | 'expired_disposed' | 'written_off' | 'recalled_destroyed' | 'returned_to_supplier';
+export type DeathCause = 'sold_out' | 'consumed' | 'expired' | 'damaged' | 'recalled' | 'returned_to_supplier' | 'rejected_at_qc' | 'written_off';
+export type DisposalCause = 'expired' | 'damaged' | 'recalled' | 'rejected_at_qc' | 'written_off';
+export const ALIVE_LOT_STATUSES: LotStatus[] = ['quarantine', 'active', 'expired'];
+
+export interface OutByCause {
+  sold: number;
+  consumed: number;
+  expired: number;
+  damaged: number;
+  shrinkage: number;
+  recalled: number;
+  returnedToSupplier: number;
+  writtenOff: number;
+}
+
+export interface LotDeath {
+  at: string;
+  cause: DeathCause;
+  lifespanDays: number;
+  lifeUsedPct: number | null;
+  valueLost: number;
+  approvedBy?: UserRef | string | null;
+  note?: string;
+}
+
+export interface LotRequest {
+  _id: string;
+  kind: 'dispose' | 'return_to_supplier';
+  cause: DisposalCause | null;
+  warehouse: string;
+  qty: number;
+  reason: string;
+  evidence: string[];
+  status: 'pending' | 'approved' | 'rejected';
+  requestedBy: UserRef | string;
+  requestedAt: string;
+  decidedBy?: UserRef | string | null;
+  decidedAt?: string | null;
+  decisionNote?: string;
+}
+
+export interface StockLot {
+  _id: string;
+  dnaCode: string;
+  product: ProductRef & { unit?: string; unitCost?: number };
+  batchNo: string;
+  supplier: (Ref & { name: string }) | null;
+  birth: {
+    type: 'purchase_receipt' | 'opening_balance' | 'return_in';
+    at: string;
+    warehouse: WarehouseRef | string;
+    bin: string;
+    qty: number;
+    unitCost: number;
+    refType: string | null;
+    refId: string | null;
+    grnNo: string | null;
+    backfilled: boolean;
+  };
+  manufactureDate: string | null;
+  expiryDate: string | null;
+  shelfLifeDays: number | null;
+  parentLots: string[];
+  status: LotStatus;
+  qtyBorn: number;
+  qtyAdded: number;
+  qtyOnHand: number;
+  qtyInTransit: number;
+  qtyReserved: number;
+  qtyOutByCause: OutByCause;
+  flags: { onHold: boolean; recalled: boolean; backfilled: boolean; qcRejected: boolean; expiryWarned: boolean };
+  warehouses: string[];
+  death: LotDeath | null;
+  eventCount: number;
+  headHash: string | null;
+  lastEventAt: string | null;
+  lastEventType: string | null;
+  lastVerify?: { at: string | null; ok: boolean | null; firstBrokenSeq: number | null };
+  requests?: LotRequest[];
+  createdAt: string;
+}
+
+export interface LotListItem extends StockLot {
+  locations: { warehouse: WarehouseRef; qty: number }[];
+  lifeUsedPct: number | null;
+  remainingShelfDays: number | null;
+}
+
+export interface JourneyStop {
+  warehouse: WarehouseRef & { city?: string };
+  arrivedAt: string;
+  departedAt: string | null;
+  dwellDays: number;
+  transitDaysBefore: number | null;
+}
+
+export interface LotDetail extends StockLot {
+  metrics: {
+    ageDays: number;
+    lifeUsedPct: number | null;
+    remainingShelfDays: number | null;
+    depletionPct: number;
+    dwellByLocation: Record<string, number>;
+    journey: JourneyStop[];
+    hops: number;
+    holdingCostAccrued: number;
+    holdingCostNote: string;
+  };
+  slices: { _id: string; warehouse: WarehouseRef; bin: string; quantity: number; expiryDate: string | null }[];
+  invariantOk: boolean;
+}
+
+export interface Gene {
+  _id: string;
+  lot: string;
+  seq: number;
+  type: string;
+  at: string;
+  actor: (UserRef & { role?: string }) | null;
+  actorRole: string;
+  warehouse: WarehouseRef | null;
+  fromWarehouse: WarehouseRef | null;
+  toWarehouse: WarehouseRef | null;
+  bin: string | null;
+  qtyDelta: number;
+  qtyMoved: number;
+  qtyAfter: { onHand: number; inTransit: number };
+  cause: string | null;
+  refType: string | null;
+  refId: string | null;
+  explanation: string;
+  evidence: string[];
+  hash: string;
+  prevHash: string;
+  daysSincePrevious: number | null;
+}
+
+export interface Genealogy {
+  lot: string;
+  nodes: { _id: string; dnaCode: string; batchNo: string; status: LotStatus; qtyBorn: number; qtyOnHand: number; role: 'self' | 'ancestor' | 'descendant' }[];
+  edges: { parentLot: string; childLot: string; relation: string; qty: number; at: string }[];
+}
+
+export interface LotVerifyResult {
+  ok: boolean;
+  eventsChecked: number;
+  firstBrokenSeq: number | null;
+  reason: string | null;
+  anchoredOk: boolean;
+  anchorProblems: { seq: number; reason: string }[];
+  checkedAt: string;
+  dnaCode: string;
+}
+
+export interface DnaWrite {
+  lot: StockLot;
+  gene: { lot: string; dnaCode: string; type: string; seq: number } | null;
+  pending?: boolean;
+  request?: LotRequest;
+}
+
+export interface DnaStats {
+  alive: number;
+  dead: number;
+  recalledAlive: number;
+  expiringSoon: number;
+  deathsByCause: { cause: DeathCause; count: number; avgLifespanDays: number; avgLifeUsedPct: number | null; valueLost: number }[];
+  averageLifespanDays: number | null;
+  averageLifeUsedAtDeath: number | null;
+  valueLostByCause: { expired: number; damaged: number; shrinkage: number; recalled: number; writtenOff: number };
+  diedThisMonthByCause: { cause: DeathCause; count: number; valueLost: number }[];
+  valueLostThisMonth: { expired: number; damaged: number; total: number };
+}
+
+export interface TraceWarehouse {
+  warehouse: WarehouseRef;
+  qtyReceived: number;
+}
+export interface TraceOrder {
+  refId: string;
+  qty: number;
+  orderNo: string | null;
+}
+
+export interface RecallTrace {
+  matched: number;
+  lots: {
+    lot: { _id: string; dnaCode: string; batchNo: string; status: LotStatus; product: ProductRef; supplier: (Ref & { name: string }) | null; flags: StockLot['flags']; qtyBorn: number; qtyOnHand: number };
+    backward: { supplier: (Ref & { name: string }) | null; birthType: string; purchaseOrder: string | null; grnNo: string | null; receivedAt: string; receivingWarehouse: WarehouseRef | null; parents: { lot: string; parent: string; relation: string; qty: number }[] };
+    forward: {
+      warehousesReached: TraceWarehouse[];
+      orders: TraceOrder[];
+      qtyDispatchedToOrders: number;
+      qtyStillAlive: number;
+      lots: { lot: string; dnaCode: string; status: LotStatus; depth: number; qtyAlive: number; qtyDispatched: number }[];
+    };
+  }[];
+  summary: { warehousesReached: TraceWarehouse[]; orders: TraceOrder[]; qtyDispatchedToOrders: number; qtyStillAlive: number };
+}
+
+export interface ReconcileResult {
+  lotsChecked: number;
+  drift: { lot: string; dnaCode: string; genesOnHand: number; headerOnHand: number; slicesOnHand: number; invariantOk: boolean }[];
+  orphanSlices: number;
+  checkedAt: string;
 }

@@ -19,6 +19,7 @@ import { useAction } from '../hooks/useAction';
 import { useAuth } from '../hooks/useAuth';
 import { useForm } from '../hooks/useForm';
 import type { BatchAnalysis, RedistributionPlan } from '../types';
+import { DnaCodeLink } from '../components/dna/LotParts';
 import { date, dateTime, humanize, number, rupees } from '../utils/format';
 import { collect, nonNegative } from '../utils/validate';
 
@@ -45,6 +46,12 @@ function AnalysisPanel({ initial, onProposed }: { initial: BatchAnalysis; onProp
       <div className="card-head">
         <h2>
           {a.product.sku} batch {a.batchNo || '(none)'} at {a.source.name}
+          {a.lot && (
+            <>
+              {' '}
+              · <DnaCodeLink id={a.lot.lot} code={a.lot.dnaCode} />
+            </>
+          )}
         </h2>
         <Badge tone={r.residualUnits > 0 ? 'warning' : 'success'}>{ADVICE[r.residualAdvice]}</Badge>
       </div>
@@ -137,6 +144,11 @@ function PlanDetail({ id }: { id: string }) {
             <dt>Batch</dt>
             <dd>
               {p.product.sku} {p.batchNo} at {p.sourceWarehouse.name}
+              {p.dnaLots?.map((l) => (
+                <div key={l._id} className="small">
+                  DNA <DnaCodeLink id={l._id} code={l.dnaCode} /> ({l.status.replace(/_/g, ' ')})
+                </div>
+              ))}
             </dd>
             <dt>Expiry</dt>
             <dd>
@@ -235,7 +247,21 @@ export default function Redistribution() {
             empty="No batch is projected to expire unsold"
             columns={[
               { key: 'p', header: 'Product', render: (c) => <strong>{c.product.sku}</strong> },
-              { key: 'b', header: 'Batch', render: (c) => c.batchNo || '—' },
+              {
+                key: 'b',
+                header: 'Batch',
+                render: (c) => (
+                  <span>
+                    {c.batchNo || '—'}
+                    {c.lot && (
+                      <>
+                        <br />
+                        <DnaCodeLink id={c.lot.lot} code={c.lot.dnaCode} />
+                      </>
+                    )}
+                  </span>
+                ),
+              },
               { key: 's', header: 'Source', render: (c) => c.source.name },
               { key: 'q', header: 'Qty', align: 'right', render: (c) => number(c.quantity, 0) },
               { key: 'd', header: 'Days left', align: 'right', render: (c) => c.daysLeft, sortValue: (c) => c.daysLeft ?? 0 },

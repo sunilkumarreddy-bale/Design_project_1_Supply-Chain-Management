@@ -147,6 +147,42 @@ const text = (page, t) => page.getByText(t, { exact: false }).first().waitFor({ 
   step('PO why modal');
   await ctx.close();
 }
+// --- Stock DNA: the milk lot from born to death, label, certificate, integrity, recall trace ---
+{
+  const { ctx, page } = await session('admin@example.com');
+  await page.goto(`${BASE}/dna`);
+  await page.locator('.chip-btn', { hasText: 'Dead' }).click();
+  await page.fill('#dna-q', 'MLK-DNA-001');
+  await page.locator('a.mono', { hasText: 'DNA-SKU-MLK-020' }).first().click();
+  await text(page, 'Lifeline');
+  await page.locator('.gene-death').waitFor();
+  const genes = await page.locator('.lifeline .gene').count();
+  console.log(`    milk lot shows ${genes} genes from Born to Death`);
+  await page.screenshot({ path: `${shots}/flow_dna_milk.png`, fullPage: true });
+  step('milk lot lifeline born -> death');
+  await page.click('button:has-text("Verify integrity")');
+  await text(page, 'Verified');
+  step('lot integrity verified');
+  const cert = page.waitForEvent('download');
+  await page.click('button:has-text("Download certificate")');
+  console.log('    downloaded', (await cert).suggestedFilename());
+  step('life certificate download');
+  await page.click('a:has-text("Print label")');
+  await page.locator('.label-sheet svg').waitFor();
+  await page.screenshot({ path: `${shots}/flow_dna_label.png` });
+  step('label page with QR');
+  await page.goto(`${BASE}/dna/recall-trace`);
+  await page.fill('#rt-batch', 'BOX-RC-01');
+  await page.click('button:has-text("Run trace")');
+  await text(page, 'Where it went');
+  console.log('   ', (await page.locator('.stats').first().innerText()).replace(/\n+/g, ' | '));
+  await page.screenshot({ path: `${shots}/flow_dna_recall.png`, fullPage: true });
+  step('recall trace on the recalled lot');
+  await page.goto(`${BASE}/`);
+  await text(page, 'Alive lots');
+  step('dashboard DNA cards');
+  await ctx.close();
+}
 await browser.close();
 console.log('PROBLEMS:\n' + (problems.join('\n') || 'none'));
 process.exit(problems.length ? 1 : 0);

@@ -16,6 +16,7 @@ const AllocationSchema = new Schema(
     bin: { type: String, default: '' },
     expiryDate: { type: Date, default: null },
     quantity: { type: Number, min: 0, required: true },
+    lot: { type: Schema.Types.ObjectId, ref: 'StockLot', default: null },
   },
   { _id: false },
 );

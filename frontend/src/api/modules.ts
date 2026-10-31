@@ -75,6 +75,10 @@ export const modulesApi = api.injectEndpoints({
       query: ({ id, data }) => ({ url: `/customer-orders/${id}`, method: 'PATCH', data }),
       invalidatesTags: ['Order'],
     }),
+    orderStock: b.mutation<{ order: CustomerOrder; shipped?: { product: string; quantity: number }[]; reservations?: unknown[] }, { id: string; action: 'reserve' | 'ship' }>({
+      query: ({ id, action }) => ({ url: `/customer-orders/${id}/${action}`, method: 'POST', data: {} }),
+      invalidatesTags: ['Order', 'Stock', 'Dna', 'Dashboard'],
+    }),
     deleteOrder: b.mutation<{ ok: true }, string>({
       query: (id) => ({ url: `/customer-orders/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Order'],
@@ -126,6 +130,7 @@ export const {
   useCreateOrderMutation,
   useUpdateOrderMutation,
   useDeleteOrderMutation,
+  useOrderStockMutation,
   useDependenciesQuery,
   useCreateDependencyMutation,
   useDeleteDependencyMutation,

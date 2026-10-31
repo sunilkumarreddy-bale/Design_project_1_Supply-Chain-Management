@@ -21,3 +21,6 @@ export * from './SimulationRun';
 export * from './StockCount';
 export * from './Discrepancy';
 export * from './Notification';
+export * from './StockLot';
+export * from './DnaEvent';
+export * from './DnaLink';
