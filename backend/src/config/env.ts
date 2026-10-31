@@ -60,6 +60,14 @@ export const env = {
   get schedulerIntervalMinutes() {
     return num('SCHEDULER_INTERVAL_MINUTES', 60);
   },
+  /** Stock DNA: days before expiry when the expiry job writes an expiry_warning gene. */
+  get dnaExpiryWarningDays() {
+    return num('DNA_EXPIRY_WARNING_DAYS', 2);
+  },
+  /** Stock DNA: notify admins when a lot dies with more value lost than this (INR). */
+  get dnaValueLostAlert() {
+    return num('DNA_VALUE_LOST_ALERT', 1000);
+  },
   get storageProvider() {
     return str('STORAGE_PROVIDER').toLowerCase();
   },

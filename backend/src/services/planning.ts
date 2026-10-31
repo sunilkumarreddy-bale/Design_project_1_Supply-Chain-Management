@@ -29,6 +29,7 @@ import { addDays, DAY_MS, startOfUtcDay } from '../utils/dates';
 import { idStr } from '../utils/ids';
 import { fmt } from '../utils/format';
 import { ApiError } from '../utils/apiError';
+import { lotInfoForSlices } from './dna';
 
 export const DEMAND_WINDOW_DAYS = 30;
 export const ALL = '*';
@@ -386,6 +387,9 @@ export async function buildInsights(warehouseId: Id | null, now = new Date()) {
 
 export interface ExpiryRiskRow {
   stockLevelId: string;
+  dnaCode: string | null;
+  lot: string | null;
+  lotStatus: string | null;
   product: { _id: string; sku: string; name: string };
   warehouse: { _id: string; code: string; name: string };
   batchNo: string;
@@ -402,7 +406,14 @@ export interface ExpiryRiskRow {
 export async function expiryRiskFor(products: PlanningProduct[], warehouseId: Id | null, now = new Date()): Promise<ExpiryRiskRow[]> {
   const match: Record<string, unknown> = { expiryDate: { $ne: null }, quantity: { $gt: 0 } };
   if (warehouseId) match.warehouse = oid(warehouseId);
-  const lines = await StockLevel.find(match).lean();
+  const found = await StockLevel.find(match).lean();
+  // projections run on sellable lots only; an expired lot is projected as waste in full, while
+  // quarantined and recalled lots are left to their QC or recall decision
+  const lotInfo = await lotInfoForSlices(found, now);
+  const lines = found.filter((l) => {
+    const i = lotInfo.get(l._id.toHexString());
+    return !i || i.sellable || i.status === 'expired';
+  });
   if (!lines.length) return [];
   const byProduct = new Map(products.map((p) => [p._id.toHexString(), p]));
   const whIds = [...new Set(lines.map((l) => l.warehouse.toHexString()))];
@@ -422,14 +433,33 @@ export async function expiryRiskFor(products: PlanningProduct[], warehouseId: Id
     const w = whName.get(idStr(ls[0].warehouse)!);
     if (!p || !w) continue;
     const d = dm.get(key)?.mean ?? p.avgDailyDemand;
+    const sellable = ls.filter((l) => lotInfo.get(l._id.toHexString())?.status !== 'expired');
+    const expiredLots = ls.filter((l) => lotInfo.get(l._id.toHexString())?.status === 'expired');
     const proj = projectExpiryWaste(
-      ls.map((l) => ({ id: l._id.toHexString(), batchNo: l.batchNo, bin: l.bin, expiryDate: l.expiryDate, quantity: l.quantity })),
+      sellable.map((l) => ({ id: l._id.toHexString(), batchNo: l.batchNo, bin: l.bin, expiryDate: l.expiryDate, quantity: l.quantity })),
       d,
       now,
       p.unitCost,
     );
+    for (const l of expiredLots) {
+      proj.lines.push({
+        id: l._id.toHexString(),
+        batchNo: l.batchNo,
+        bin: l.bin,
+        expiryDate: l.expiryDate!,
+        quantity: l.quantity,
+        daysLeft: Math.floor((l.expiryDate!.getTime() - now.getTime()) / DAY_MS),
+        sellThrough: 0,
+        wasteUnits: l.quantity,
+        valueAtRisk: l.quantity * p.unitCost,
+      });
+    }
     for (const pl of proj.lines) {
+      const li = lotInfo.get(pl.id!);
       out.push({
+        dnaCode: li?.dnaCode ?? null,
+        lot: li?.lot ?? null,
+        lotStatus: li?.status ?? null,
         stockLevelId: pl.id!,
         product: { _id: p._id.toHexString(), sku: p.sku, name: p.name },
         warehouse: { _id: w._id.toHexString(), code: w.code, name: w.name },

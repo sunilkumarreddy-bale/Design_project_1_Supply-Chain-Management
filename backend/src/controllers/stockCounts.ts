@@ -1,14 +1,14 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { StockCount, StockLevel } from '../models';
-import { withTransaction } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { snapshot } from '../utils/ids';
 import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
 import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
-import { addToLine, afterStockChange, requireActiveWarehouse } from '../services/inventory';
+import { afterStockChange, requireActiveWarehouse } from '../services/inventory';
+import { postCountAdjustment, runStock } from '../services/stockService';
 import { nextCountNo } from '../services/counters';
 import { raiseAlert } from '../services/alerts';
 import { emitAll } from '../sockets';
@@ -145,27 +145,25 @@ export async function reconcileCount(req: Request, res: Response) {
   assertWarehouseScope(user, pre.warehouse);
   if (pre.status !== 'submitted') throw ApiError.conflict(`Count ${pre.countNo} must be submitted before reconciling (it is ${pre.status})`);
   const before = snapshot(pre);
-  const adjustments = await withTransaction(async (session) => {
+  const { result: adjustments } = await runStock(user, async (ctx) => {
+    const session = ctx.session;
     const c = await StockCount.findById(pre._id).session(session);
     if (!c || c.status !== 'submitted') throw ApiError.conflict('Count is no longer submitted');
     const out = [];
     for (const l of c.lines) {
       const variance = l.variance ?? 0;
       if (variance === 0) continue;
-      const filter = { product: l.product, warehouse: c.warehouse, batchNo: l.batchNo, bin: l.bin };
-      const live = await StockLevel.findOne(filter).session(session);
-      if (live) {
-        const from = live.quantity;
-        live.quantity = Math.max(0, from + variance);
-        await live.save({ session });
-        out.push({ line: l, lineId: live._id, from, to: live.quantity, variance });
-      } else if (variance > 0) {
-        const { line } = await addToLine(
-          { product: l.product, warehouse: c.warehouse, bin: l.bin, batchNo: l.batchNo, expiryDate: l.expiryDate ?? null, quantity: variance },
-          session,
-        );
-        out.push({ line: l, lineId: line._id, from: 0, to: line.quantity, variance });
-      }
+      const posted = await postCountAdjustment(ctx, {
+        product: l.product,
+        warehouse: c.warehouse,
+        bin: l.bin,
+        batchNo: l.batchNo,
+        expiryDate: l.expiryDate ?? null,
+        variance,
+        refId: c._id,
+        countNo: c.countNo,
+      });
+      if (posted) out.push({ line: l, lineId: posted.lineId, from: posted.from, to: posted.to, variance: posted.variance });
     }
     c.status = 'reconciled';
     c.reconciledBy = user._id;

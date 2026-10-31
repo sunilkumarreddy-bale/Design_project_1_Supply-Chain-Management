@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { RedistributionPlan, REDISTRIBUTION_STATUSES, Transfer } from '../models';
+import { RedistributionPlan, REDISTRIBUTION_STATUSES, StockLot, Transfer } from '../models';
 import { ApiError } from '../utils/apiError';
 import { currentUser } from '../middleware/auth';
 import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
@@ -60,7 +60,8 @@ export async function getPlan(req: Request, res: Response) {
   const transfers = await Transfer.find({ _id: { $in: plan.lines.map((l) => l.transfer).filter(Boolean) } })
     .populate('toWarehouse', 'code name')
     .lean();
-  res.json({ ...plan, transfers });
+  const lots = await StockLot.find({ product: (plan.product as unknown as { _id: unknown })._id, batchNo: plan.batchNo }).select('dnaCode status').sort({ createdAt: 1 }).lean();
+  res.json({ ...plan, transfers, dnaLots: lots, dnaCodes: lots.map((l) => l.dnaCode) });
 }
 
 export async function approvePlan(req: Request, res: Response) {

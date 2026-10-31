@@ -12,6 +12,7 @@ import transfers from './transfers';
 import { discrepancies, stockCounts, stockPolicies, transferRoutes } from './operations';
 import purchaseOrders from './purchaseOrders';
 import { alertsRouter, analyticsRouter, auditRouter, dashboardRouter } from './insights';
+import dnaRouter from './dna';
 import {
   customerOrders,
   mapsRouter,
@@ -54,5 +55,6 @@ api.use('/simulation', simulation);
 api.use('/reports', reports);
 api.use('/notifications', notifications);
 api.use('/maps', mapsRouter);
+api.use('/dna', dnaRouter);
 
 export default api;

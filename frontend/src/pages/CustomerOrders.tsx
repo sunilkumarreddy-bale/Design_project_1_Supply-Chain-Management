@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useCreateDependencyMutation, useCreateOrderMutation, useCustomerOrdersQuery, useDeleteDependencyMutation, useDependenciesQuery, useUpdateOrderMutation } from '../api/modules';
+import { useCreateDependencyMutation, useCreateOrderMutation, useCustomerOrdersQuery, useDeleteDependencyMutation, useDependenciesQuery, useOrderStockMutation, useUpdateOrderMutation } from '../api/modules';
 import Badge from '../components/Badge';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DataTable from '../components/DataTable';
@@ -186,6 +186,7 @@ export default function CustomerOrders() {
   const [cancelling, setCancelling] = useState<CustomerOrder | null>(null);
   const list = useCustomerOrdersQuery({ status: status || undefined, page });
   const [update] = useUpdateOrderMutation();
+  const [orderStock] = useOrderStockMutation();
   const { busy, run } = useAction();
   return (
     <>
@@ -246,6 +247,28 @@ export default function CustomerOrders() {
                           </button>
                           <button type="button" className="btn btn-sm" onClick={() => setCancelling(o)}>
                             Cancel
+                          </button>
+                        </>
+                      )}
+                      {(o.status === 'open' || o.status === 'late') && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            title="Reserve the outstanding quantity by FEFO (recorded in each lot's DNA)"
+                            disabled={busy === `res${o._id}`}
+                            onClick={() => run(`res${o._id}`, () => orderStock({ id: o._id, action: 'reserve' }).unwrap(), `${o.orderNo}: stock reserved`)}
+                          >
+                            Reserve
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            title="Ship by FEFO from the order's warehouse; each lot records the sale against this order"
+                            disabled={busy === `ship${o._id}`}
+                            onClick={() => run(`ship${o._id}`, () => orderStock({ id: o._id, action: 'ship' }).unwrap(), (r) => `${o.orderNo} shipped (${(r.shipped ?? []).reduce((t, x) => t + x.quantity, 0)} units)`)}
+                          >
+                            Ship
                           </button>
                         </>
                       )}

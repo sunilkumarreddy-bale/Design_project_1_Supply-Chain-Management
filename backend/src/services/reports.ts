@@ -6,7 +6,7 @@ import { toCsv } from '../utils/csv';
 import { expiryRiskFor, loadPlanningProducts } from './planning';
 
 const d10 = (d: Date | null | undefined) => (d ? new Date(d).toISOString().slice(0, 10) : '');
-const money = (n: number) => `Rs ${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+export const money = (n: number) => `Rs ${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 async function stockRows(warehouse?: string | null) {
   const lines = await StockLevel.find({ quantity: { $gt: 0 }, ...(warehouse ? { warehouse } : {}) })
@@ -130,13 +130,13 @@ export async function expiryCsv(warehouse?: string | null) {
 
 /* ------------------------------------------------------------------ PDF */
 
-interface Column {
+export interface Column {
   header: string;
   width: number;
   align?: 'left' | 'right';
 }
 
-function pdfBuffer(build: (doc: PDFKit.PDFDocument) => void): Promise<Buffer> {
+export function pdfBuffer(build: (doc: PDFKit.PDFDocument) => void): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, info: { Title: 'Smart Inventory report' } });
     const chunks: Buffer[] = [];
@@ -148,13 +148,13 @@ function pdfBuffer(build: (doc: PDFKit.PDFDocument) => void): Promise<Buffer> {
   });
 }
 
-function header(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
+export function header(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
   doc.fillColor('#8c1d2f').fontSize(18).font('Helvetica-Bold').text(title);
   doc.fillColor('#555').fontSize(9).font('Helvetica').text(subtitle);
   doc.moveDown(0.8);
 }
 
-function table(doc: PDFKit.PDFDocument, cols: Column[], rows: (string | number)[][]) {
+export function table(doc: PDFKit.PDFDocument, cols: Column[], rows: (string | number)[][]) {
   const x0 = doc.page.margins.left;
   const bottom = doc.page.height - doc.page.margins.bottom;
   const drawHeader = () => {

@@ -37,6 +37,8 @@ customerOrders.get('/', validate({ query: co.listOrdersQuery }), h(co.listOrders
 customerOrders.post('/', validate({ body: co.createOrderSchema }), h(co.createOrder));
 customerOrders.patch('/:id', validate({ ...idParam, body: co.updateOrderSchema }), h(co.updateOrder));
 customerOrders.delete('/:id', validate(idParam), h(co.deleteOrder));
+customerOrders.post('/:id/reserve', validate(idParam), h(co.reserveOrder));
+customerOrders.post('/:id/ship', validate({ ...idParam, body: co.shipSchema }), h(co.shipOrder));
 
 export const productDependencies = Router();
 productDependencies.use(requireRole(...MANAGERS));

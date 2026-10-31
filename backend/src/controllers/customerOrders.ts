@@ -7,7 +7,9 @@ import { recordAudit } from '../middleware/audit';
 import { currentUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
 import { dateLike, objectId, pageOf, paging, positiveQty, nullableNumber } from '../middleware/validate';
-import { requireActiveWarehouse } from '../services/inventory';
+import { afterStockChange, recordDemand, requireActiveWarehouse } from '../services/inventory';
+import { dispatchFefo, releaseReserve, reserve, runStock } from '../services/stockService';
+import { emitAll } from '../sockets';
 import { nextCustomerOrderNo } from '../services/counters';
 import { sendPage } from './helpers';
 
@@ -100,6 +102,78 @@ export async function deleteOrder(req: Request, res: Response) {
   await o.deleteOne();
   await recordAudit({ action: 'customer_order.delete', entityType: 'CustomerOrder', entityId: o._id, actor: user, warehouse: o.warehouse, before: o });
   res.json({ ok: true });
+}
+
+export const shipSchema = z.object({
+  lines: z.array(z.object({ product: objectId, quantity: positiveQty })).optional(),
+});
+
+async function openOrder(id: string) {
+  const o = await CustomerOrder.findById(id);
+  if (!o) throw ApiError.notFound('Order not found');
+  if (o.status === 'cancelled' || o.status === 'fulfilled') throw ApiError.conflict(`Order ${o.orderNo} is ${o.status}`);
+  return o;
+}
+
+/** Reserves the outstanding quantity of every line by FEFO (reserve genes on the lots). */
+export async function reserveOrder(req: Request, res: Response) {
+  const user = currentUser(req);
+  const pre = await openOrder(req.params.id);
+  assertWarehouseScope(user, pre.warehouse);
+  const { result, genes } = await runStock(user, async (ctx) => {
+    await releaseReserve(ctx, { refType: 'customer_order', refId: pre._id, explanation: `Re-reserving ${pre.orderNo}` });
+    const out = [];
+    for (const l of pre.items) {
+      const q = l.quantity - (l.quantityFulfilled ?? 0);
+      if (q <= 0) continue;
+      out.push({ product: l.product, lots: await reserve(ctx, { product: l.product, warehouse: pre.warehouse, quantity: q, refType: 'customer_order', refId: pre._id }) });
+    }
+    await recordAudit({ action: 'customer_order.reserve', entityType: 'CustomerOrder', entityId: pre._id, actor: user, warehouse: pre.warehouse, after: { reservations: out } }, ctx.session);
+    return out;
+  });
+  res.json({ order: await populate(CustomerOrder.findById(pre._id)).lean(), reservations: result, genes: genes.length });
+}
+
+/**
+ * Ships an order by FEFO from its warehouse (all outstanding quantities, or the given lines): releases its
+ * reservations, writes pick_fefo and dispatch_sale genes against the order, and marks it fulfilled when done.
+ */
+export async function shipOrder(req: Request, res: Response) {
+  const user = currentUser(req);
+  const pre = await openOrder(req.params.id);
+  assertWarehouseScope(user, pre.warehouse);
+  const b = req.body as z.infer<typeof shipSchema>;
+  const { result } = await runStock(user, async (ctx) => {
+    const o = await CustomerOrder.findById(pre._id).session(ctx.session);
+    if (!o) throw ApiError.notFound('Order not found');
+    await releaseReserve(ctx, { refType: 'customer_order', refId: o._id, explanation: `Released for shipping ${o.orderNo}` });
+    const shipped = [];
+    for (const l of o.items) {
+      const outstanding = l.quantity - (l.quantityFulfilled ?? 0);
+      const asked = b.lines ? b.lines.find((x) => x.product === String(l.product))?.quantity ?? 0 : outstanding;
+      if (asked > outstanding) throw ApiError.badRequest(`Only ${outstanding} outstanding for a line of ${o.orderNo}`);
+      if (asked <= 0) continue;
+      const allocations = await dispatchFefo(ctx, {
+        product: l.product,
+        warehouse: o.warehouse,
+        quantity: asked,
+        refType: 'customer_order',
+        refId: o._id,
+        explanation: `Shipped ${asked} on customer order ${o.orderNo}`,
+      });
+      await recordDemand(l.product, o.warehouse, asked, ctx.session);
+      l.quantityFulfilled = (l.quantityFulfilled ?? 0) + asked;
+      shipped.push({ product: l.product, quantity: asked, allocations });
+    }
+    if (!shipped.length) throw ApiError.badRequest('Nothing to ship');
+    if (o.items.every((l) => (l.quantityFulfilled ?? 0) >= l.quantity)) o.status = 'fulfilled';
+    await o.save({ session: ctx.session });
+    await recordAudit({ action: 'customer_order.ship', entityType: 'CustomerOrder', entityId: o._id, actor: user, warehouse: o.warehouse, after: { shipped } }, ctx.session);
+    return shipped;
+  });
+  for (const s of result) await afterStockChange(s.product, [pre.warehouse], { action: 'dispatch', quantity: s.quantity });
+  emitAll('order:update', { _id: pre._id });
+  res.json({ order: await populate(CustomerOrder.findById(pre._id)).lean(), shipped: result });
 }
 
 export const createDependencySchema = z

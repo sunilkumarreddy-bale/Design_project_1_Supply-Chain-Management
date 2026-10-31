@@ -1,14 +1,14 @@
 /** Tracked transfers: pending_approval -> approved -> in_transit -> completed (or rejected / cancelled). */
 import { ClientSession } from 'mongoose';
 import { Transfer } from '../models';
-import { withTransaction } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { idStr, snapshot } from '../utils/ids';
 import { recordAudit } from '../middleware/audit';
 import type { AuthUser } from '../middleware/auth';
 import { assertWarehouseScope } from '../middleware/rbac';
 import { emitAll } from '../sockets';
-import { afterStockChange, putAllocations, requireActiveProduct, requireActiveWarehouse, takeFromStock } from './inventory';
+import { afterStockChange, requireActiveProduct, requireActiveWarehouse } from './inventory';
+import { receiveTransfer as receiveTransferLots, runStock, shipTransfer } from './stockService';
 import { onTransferChanged } from './planProgress';
 import { notifySafe } from './notifications';
 
@@ -138,17 +138,14 @@ export async function dispatchTransfer(id: string, user: AuthUser) {
   expect(pre, ['approved'], 'dispatch');
   assertWarehouseScope(user, pre.fromWarehouse, 'the source warehouse');
   const before = snapshot(pre);
-  const t = await withTransaction(async (session) => {
-    const doc = await Transfer.findById(id).session(session);
+  const { result: t } = await runStock(user, async (ctx) => {
+    const doc = await Transfer.findById(id).session(ctx.session);
     if (!doc || doc.status !== 'approved') throw ApiError.conflict('Transfer is no longer approved');
-    const allocations = await takeFromStock(
-      { product: idStr(doc.product)!, warehouse: idStr(doc.fromWarehouse)!, quantity: doc.quantity, batchNo: doc.batchNo || null },
-      session,
-    );
-    doc.allocations = allocations.map((a) => ({ batchNo: a.batchNo, bin: a.bin, expiryDate: a.expiryDate, quantity: a.quantity })) as any;
+    const allocations = await shipTransfer(ctx, doc);
+    doc.allocations = allocations.map((a) => ({ batchNo: a.batchNo, bin: a.bin, expiryDate: a.expiryDate, quantity: a.quantity, lot: a.lot })) as any;
     doc.status = 'in_transit';
     doc.dispatchedAt = new Date();
-    await doc.save({ session });
+    await doc.save({ session: ctx.session });
     return doc;
   });
   await finish(t, before, 'dispatch', user, 'transfer_dispatched', `Transfer of ${t.quantity} units dispatched`);
@@ -162,21 +159,19 @@ export async function receiveTransfer(id: string, user: AuthUser, bin?: string |
   expect(pre, ['in_transit'], 'receive');
   assertWarehouseScope(user, pre.toWarehouse, 'the destination warehouse');
   const before = snapshot(pre);
-  const t = await withTransaction(async (session) => {
-    const doc = await Transfer.findById(id).session(session);
+  const { result: t } = await runStock(user, async (ctx) => {
+    const doc = await Transfer.findById(id).session(ctx.session);
     if (!doc || doc.status !== 'in_transit') throw ApiError.conflict('Transfer is no longer in transit');
-    const to = await requireActiveWarehouse(doc.toWarehouse, session);
-    await putAllocations(
-      doc.product,
-      to,
-      doc.allocations.map((a) => ({ batchNo: a.batchNo ?? '', expiryDate: a.expiryDate ?? null, quantity: a.quantity })),
-      session,
+    await receiveTransferLots(
+      ctx,
+      doc,
+      doc.allocations.map((a) => ({ lot: a.lot ?? null, batchNo: a.batchNo ?? '', expiryDate: a.expiryDate ?? null, quantity: a.quantity })),
       bin,
     );
     doc.status = 'completed';
     doc.receivedAt = new Date();
     doc.receivedBy = user._id;
-    await doc.save({ session });
+    await doc.save({ session: ctx.session });
     return doc;
   });
   await finish(t, before, 'receive', user, 'transfer_received', `Transfer of ${t.quantity} units received`);

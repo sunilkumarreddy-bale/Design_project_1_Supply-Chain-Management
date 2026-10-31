@@ -8,6 +8,7 @@ import QueryState from '../components/QueryState';
 import { useAction } from '../hooks/useAction';
 import { useAuth } from '../hooks/useAuth';
 import { dateTime, humanize, number } from '../utils/format';
+import { DnaCodeLink } from '../components/dna/LotParts';
 
 export default function RecoveryPlanDetail() {
   const { id = '' } = useParams();
@@ -124,6 +125,16 @@ export default function RecoveryPlanDetail() {
                       ))}
                     </tbody>
                   </table>
+                )}
+                {!!p.dnaLots?.length && (
+                  <p className="small mt">
+                    Stock DNA lots touched by this plan (each carries a decision note with the plan&apos;s numbers):{' '}
+                    {p.dnaLots.map((l) => (
+                      <span key={l._id}>
+                        <DnaCodeLink id={l._id} code={l.dnaCode} />{' '}
+                      </span>
+                    ))}
+                  </p>
                 )}
               </div>
               <div className="card mt">

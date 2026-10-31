@@ -16,6 +16,7 @@ import { nextRedistributionPlanNo } from './counters';
 import { raiseAlert, resolveAlerts } from './alerts';
 import { notifySafe } from './notifications';
 import { createTrackedTransfer } from './transfers';
+import { lotInfoForSlices, SliceLotInfo } from './dna';
 
 export interface BatchAnalysis {
   stockLevelId: string;
@@ -28,6 +29,7 @@ export interface BatchAnalysis {
   asOf: Date;
   result: RedistributionResult;
   notes: string[];
+  lot?: SliceLotInfo | null;
 }
 
 export async function analyzeBatch(stockLevelId: string, minShelfLifeDays?: number | null, now = new Date()): Promise<BatchAnalysis> {
@@ -35,6 +37,11 @@ export async function analyzeBatch(stockLevelId: string, minShelfLifeDays?: numb
   if (!line) throw ApiError.notFound('Stock line not found');
   if (!line.expiryDate) throw ApiError.badRequest('This stock line has no expiry date');
   if (line.quantity <= 0) throw ApiError.badRequest('This stock line is empty');
+  // the batch's DNA lot decides whether it may move at all, and supplies its remaining shelf life
+  const lotInfo = (await lotInfoForSlices([line], now)).get(stockLevelId) ?? null;
+  if (lotInfo && !lotInfo.sellable) {
+    throw ApiError.conflict(`Lot ${lotInfo.dnaCode} is ${lotInfo.recalled ? 'recalled' : lotInfo.status}; it cannot be redistributed`);
+  }
   const product = await loadPlanningProduct(line.product);
   const source = await Warehouse.findById(line.warehouse).lean();
   if (!source) throw ApiError.notFound('Warehouse not found');
@@ -93,8 +100,12 @@ export async function analyzeBatch(stockLevelId: string, minShelfLifeDays?: numb
     destinations,
   });
   result.explanation.push(...notes);
+  if (lotInfo) {
+    result.explanation.push(`Lot ${lotInfo.dnaCode}: ${lotInfo.remainingShelfDays} days of shelf life left according to its DNA record`);
+  }
   return {
     stockLevelId,
+    lot: lotInfo,
     product: {
       _id: product._id.toHexString(),
       sku: product.sku,
@@ -115,7 +126,10 @@ export async function analyzeBatch(stockLevelId: string, minShelfLifeDays?: numb
 
 /** Scans every dated batch; returns candidate plans (not saved) for batches with projected waste > 0. */
 export async function scan(now = new Date()) {
-  const lines = await StockLevel.find({ expiryDate: { $ne: null }, quantity: { $gt: 0 } }).lean();
+  const all = await StockLevel.find({ expiryDate: { $ne: null }, quantity: { $gt: 0 } }).lean();
+  // expired, quarantined and recalled lots are not redistributed (they are disposed, released or returned)
+  const info = await lotInfoForSlices(all, now);
+  const lines = all.filter((l) => info.get(l._id.toHexString())?.sellable ?? true);
   if (!lines.length) return [];
   const productIds = [...new Set(lines.map((l) => l.product.toHexString()))];
   const products = await loadPlanningProducts({ _id: { $in: productIds } });

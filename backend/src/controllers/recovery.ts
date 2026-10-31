@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { PurchaseOrder, RecoveryPlan, RECOVERY_STATUSES, Transfer } from '../models';
+import { DnaEvent, PurchaseOrder, RecoveryPlan, RECOVERY_STATUSES, StockLot, Transfer } from '../models';
 import { ApiError } from '../utils/apiError';
 import { currentUser } from '../middleware/auth';
 import { objectId, pageOf, paging, nullableNumber } from '../middleware/validate';
@@ -90,7 +90,11 @@ export async function getPlan(req: Request, res: Response) {
       .lean(),
     PurchaseOrder.find({ _id: { $in: poIds } }).populate('supplier', 'name').lean(),
   ]);
-  res.json({ ...plan, selectedOption: plan.options.find((o) => o.optionId === plan.selectedOptionId) ?? null, transfers, purchaseOrders });
+  // the DNA lots this plan touched: drawn by its transfers or born from its purchase orders
+  const lotIds = transfers.flatMap((t) => (t.allocations ?? []).map((a) => a.lot)).filter(Boolean);
+  const born = await DnaEvent.find({ type: 'born', refType: 'purchase_order', refId: { $in: poIds } }).select('lot').lean();
+  const dnaLots = await StockLot.find({ _id: { $in: [...lotIds, ...born.map((b) => b.lot)] } }).select('dnaCode status batchNo').lean();
+  res.json({ ...plan, selectedOption: plan.options.find((o) => o.optionId === plan.selectedOptionId) ?? null, transfers, purchaseOrders, dnaLots });
 }
 
 export async function approvePlan(req: Request, res: Response) {
