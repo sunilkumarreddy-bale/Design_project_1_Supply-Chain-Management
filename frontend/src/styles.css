@@ -1050,6 +1050,9 @@ textarea {
   margin-bottom: 10px;
   color: #c3c8d2;
 }
+.scanner-target {
+  width: 100%;
+}
 .option-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
