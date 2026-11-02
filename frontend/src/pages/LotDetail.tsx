@@ -407,7 +407,7 @@ export default function LotDetail() {
               </div>
             </div>
             <div className="lot-qr" aria-label={`QR code for ${lot.dnaCode}`}>
-              <QRCodeSVG value={lot.dnaCode} size={132} />
+              <QRCodeSVG value={lot.dnaCode} size={140} level="Q" marginSize={4} />
             </div>
           </div>
 
