@@ -36,7 +36,7 @@ export default function LotLabel() {
             </div>
           </div>
           <div className={`label-sheet label-${size}`}>
-            <QRCodeSVG value={l.dnaCode} size={size === 'small' ? 72 : 140} />
+            <QRCodeSVG value={l.dnaCode} size={size === 'small' ? 80 : 150} level="Q" marginSize={4} />
             <div>
               <div className="mono">
                 <strong>{l.dnaCode}</strong>
