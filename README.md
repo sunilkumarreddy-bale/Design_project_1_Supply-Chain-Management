@@ -241,8 +241,9 @@ Socket.io events: `stock:update`, `alert:new|update|resolved`, `po:created|appro
 | Backend unit (engines, JWT, RBAC, error handler, adapters, validation) | `cd backend && npm run test:unit` | passing |
 | Backend integration (Supertest + in-memory replica set) | `npm run test:integration` | passing |
 | Backend total | `npm test` | **26 suites, 357 tests passing** (including Stock DNA unit, static and integration tests) |
-| Frontend (Vitest + Testing Library: login, protected routing, ExplainPanel, DataTable, form validation, Stock DNA lifeline and bars) | `cd frontend && npm test` | **23 tests passing** |
+| Frontend (Vitest + Testing Library: login, protected routing, ExplainPanel, DataTable, form validation, Stock DNA lifeline and bars) | `cd frontend && npm test` | **26 tests passing** |
 | Browser workflow (Playwright, 21 steps across staff, manager, admin, including the DNA milk story and recall trace) | `cd frontend && npm run e2e` (stack running, freshly seeded) | passing, 0 console errors, 0 failed API calls |
+| Camera / QR scanner (real Chromium, fake webcam playing QR videos: product and DNA labels, scan-to-act, denied and missing camera) | `cd frontend && npm run e2e:camera` ([docs/CAMERA_TEST.md](docs/CAMERA_TEST.md)) | **8/8 passing**; 3 scanner bugs found and fixed |
 | Lint / types | `npm run lint && npm run typecheck` (both apps) | clean |
 
 Backend coverage (Jest, `npm run test:coverage`), statements / branches / functions / lines:
@@ -284,7 +285,7 @@ full details are in [docs/LOAD_RESULTS.md](docs/LOAD_RESULTS.md).
 | Google Maps (geocoding, distance, web map) | Real driver implemented and tested with mocked HTTP; **needs `GOOGLE_MAPS_API_KEY` / `VITE_GOOGLE_MAPS_KEY`**; deterministic mock geocoder and a schematic map otherwise |
 | Razorpay / Stripe payments | Behind `ENABLE_PAYMENTS=true`; mock driver tested end to end; real drivers **need keys** |
 | AWS EC2, MongoDB Atlas, Vercel | Steps below; **not deployed** |
-| Real camera scanning | Implemented with html5-qrcode; needs HTTPS (or localhost) and a camera, **not exercised in headless tests** (manual SKU entry is tested) |
+| Real camera scanning | html5-qrcode with a jsQR fallback decoder. Tested end to end with Chromium's fake webcam (docs/CAMERA_TEST.md). Needs HTTPS (or localhost); a physical phone camera and iOS Safari are **not tested** |
 
 ## Deployment
 
