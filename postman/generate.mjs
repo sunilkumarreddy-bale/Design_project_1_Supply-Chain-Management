@@ -11,7 +11,7 @@ const folders = {
     ['POST', '/auth/login', { email: 'admin@example.com', password: 'Password123!' }, 'Login (saves token)'],
     ['POST', '/auth/register', { name: 'New Staff', email: 'new.staff@example.com', password: 'Password123!' }],
     ['GET', '/auth/me'],
-    ['PATCH', '/auth/me', { name: 'Asha Admin', phone: '+919800000001', notify: { inApp: true, email: true, sms: false } }],
+    ['PATCH', '/auth/me', { name: 'BALE SUNIL KUMAR REDDY', phone: '+919800000001', notify: { inApp: true, email: true, sms: false } }],
     ['POST', '/auth/change-password', { currentPassword: 'Password123!', newPassword: 'Password123!' }],
     ['GET', '/health'],
     ['GET', '/config'],

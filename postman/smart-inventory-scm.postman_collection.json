@@ -237,7 +237,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Asha Admin\",\n  \"phone\": \"+919800000001\",\n  \"notify\": {\n    \"inApp\": true,\n    \"email\": true,\n    \"sms\": false\n  }\n}",
+              "raw": "{\n  \"name\": \"BALE SUNIL KUMAR REDDY\",\n  \"phone\": \"+919800000001\",\n  \"notify\": {\n    \"inApp\": true,\n    \"email\": true,\n    \"sms\": false\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
