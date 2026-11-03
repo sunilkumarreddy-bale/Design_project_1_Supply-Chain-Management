@@ -88,10 +88,10 @@ export async function seedDatabase(opts: { ifEmpty?: boolean; log?: (m: string) 
   }
 
   const users = [
-    { name: 'Asha Admin', email: 'admin@example.com', role: 'admin', phone: '+919800000001' },
-    { name: 'Manoj Manager', email: 'manager@example.com', role: 'warehouse_manager', warehouse: wh['WH-NORTH']._id, phone: '+919800000002' },
-    { name: 'Sita Staff', email: 'staff@example.com', role: 'staff', warehouse: wh['WH-NORTH']._id },
-    { name: 'Acme Portal', email: 'supplier@example.com', role: 'supplier', supplier: sup.acme._id },
+    { name: 'BALE SUNIL KUMAR REDDY', email: 'admin@example.com', role: 'admin', phone: '+919800000001' },
+    { name: 'VARSHITH SAI', email: 'manager@example.com', role: 'warehouse_manager', warehouse: wh['WH-NORTH']._id, phone: '+919800000002' },
+    { name: 'ABHISHEK', email: 'staff@example.com', role: 'staff', warehouse: wh['WH-NORTH']._id },
+    { name: 'VINAY BABU', email: 'supplier@example.com', role: 'supplier', supplier: sup.acme._id },
     { name: 'Initech Portal', email: 'supplier2@example.com', role: 'supplier', supplier: sup.initech._id },
   ];
   const u: Record<string, InstanceType<typeof User>> = {};

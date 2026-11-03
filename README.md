@@ -77,13 +77,13 @@ npm run dev             # http://localhost:5173
 
 ### Seeded accounts (password `Password123!`)
 
-| Email | Role | Scope |
-|-------|------|-------|
-| admin@example.com | admin | all warehouses |
-| manager@example.com | warehouse_manager | WH-NORTH (Warehouse A) |
-| staff@example.com | staff | WH-NORTH (Warehouse A) |
-| supplier@example.com | supplier | Acme Components |
-| supplier2@example.com | supplier | Initech Supplies |
+| Name | Email | Role | Scope |
+|------|-------|------|-------|
+| BALE SUNIL KUMAR REDDY | admin@example.com | admin | all warehouses |
+| VARSHITH SAI | manager@example.com | warehouse_manager | WH-NORTH (Warehouse A) |
+| ABHISHEK | staff@example.com | staff | WH-NORTH (Warehouse A) |
+| VINAY BABU | supplier@example.com | supplier | Acme Components |
+| Initech Portal | supplier2@example.com | supplier | Initech Supplies |
 
 The seed creates three warehouses (Bengaluru, Chennai, Kolkata), three suppliers (Globex with six real late
 deliveries: 12, 14, 11, 15, 13, 12 days against a 10-day promise), eight products, 30 days of demand history,
