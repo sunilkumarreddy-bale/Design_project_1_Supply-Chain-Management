@@ -10,7 +10,7 @@ const gene = (seq: number, type: string, extra: Partial<Gene> = {}): Gene => ({
   seq,
   type,
   at: new Date(Date.UTC(2026, 0, seq)).toISOString(),
-  actor: { _id: 'u1', name: 'Asha Admin' },
+  actor: { _id: 'u1', name: 'BALE SUNIL KUMAR REDDY' },
   actorRole: 'admin',
   warehouse: { _id: 'w1', code: 'WH-NORTH', name: 'Warehouse A' },
   fromWarehouse: null,
